@@ -1,0 +1,25 @@
+# Local datasets and generated outputs
+/dataset/*
+!/dataset/raw/
+/dataset/raw/*
+!/dataset/raw/training_schema.drawio
+
+# Virtual environments and local configuration
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+
+# Python and Jupyter caches
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+
+# Test, coverage, and tooling outputs
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.ruff_cache/
