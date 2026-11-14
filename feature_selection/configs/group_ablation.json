@@ -1,0 +1,80 @@
+{
+  "model": {
+    "objective": "binary",
+    "metric": "auc",
+    "n_estimators": 400,
+    "learning_rate": 0.05,
+    "num_leaves": 31,
+    "random_state": 42,
+    "deterministic": true,
+    "force_col_wise": true,
+    "verbosity": -1
+  },
+  "early_stopping_rounds": 40,
+  "split": {
+    "train_start": 0,
+    "train_end": 63,
+    "validation_end": 77,
+    "test_end": 91
+  },
+  "feature_groups": {
+    "applicant_information": [
+      "person_1_applicant_empl_industry_691L",
+      "person_1_applicant_incometype_1044T",
+      "person_1_applicant_mainoccupationinc_384A",
+      "employment_tenure_days"
+    ],
+    "loan_amounts": [
+      "static_0_annuity_780A",
+      "static_0_credamount_770A"
+    ],
+    "affordability_ratios": [
+      "annuity_to_reported_income",
+      "credit_amount_to_reported_income"
+    ],
+    "debit_card_history": [
+      "debit_card_opening_earliest_days_ago",
+      "debit_card_opening_latest_days_ago",
+      "debit_card_opening_span_days"
+    ],
+    "deposit_history": [
+      "deposit_opening_earliest_days_ago",
+      "deposit_opening_latest_days_ago",
+      "deposit_opening_span_days"
+    ],
+    "previous_application_history": [
+      "prior_application_earliest_days_ago",
+      "prior_application_latest_days_ago",
+      "prior_application_span_days"
+    ],
+    "bureau_update_history": [
+      "active_bureau_update_earliest_days_ago",
+      "active_bureau_update_latest_days_ago",
+      "active_bureau_update_span_days"
+    ]
+  },
+  "ablations": {
+    "all_eligible": [],
+    "without_applicant_information": [
+      "applicant_information"
+    ],
+    "without_loan_amounts": [
+      "loan_amounts"
+    ],
+    "without_affordability_ratios": [
+      "affordability_ratios"
+    ],
+    "without_debit_card_history": [
+      "debit_card_history"
+    ],
+    "without_deposit_history": [
+      "deposit_history"
+    ],
+    "without_previous_application_history": [
+      "previous_application_history"
+    ],
+    "without_bureau_update_history": [
+      "bureau_update_history"
+    ]
+  }
+}

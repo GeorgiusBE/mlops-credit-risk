@@ -23,3 +23,9 @@ __pycache__/
 htmlcov/
 .mypy_cache/
 .ruff_cache/
+
+# Local MLflow metadata, artifacts, and server logs
+/.mlflow/
+/mlruns/
+/mlartifacts/
+/mlflow.db*
