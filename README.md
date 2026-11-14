@@ -27,7 +27,7 @@ the project environment has been installed. The default command only prints help
 | `make joint` | Run joint removals, save the comparison, and stop for your review. |
 | `make confirm-plan` | Inspect your explicit shortlist and temporal validation windows. |
 | `make confirm` | Validate your chosen feature sets using a completed joint/review study. |
-| `make test` | Run the tests without needing a running MLflow server. |
+| `make test` | Run the pytest suite without needing a running MLflow server. |
 | `make dvc-status` | Check tracked data against its current DVC snapshot. |
 | `make dvc-snapshot` | Cache raw inputs and final training inputs; update DVC metadata. |
 
@@ -350,10 +350,21 @@ dependency constraints require Graphene 3 and GraphQL-core 3: the older GraphQL 
 stack can let tracking calls succeed while the experiment page receives an HTML
 500 error and displays `Unexpected token '<' ... is not valid JSON`.
 
-After installing or updating dependencies, check this endpoint with:
+After installing or updating dependencies, check this endpoint with pytest:
 
 ```bash
-python -m unittest discover -s tests -v
+python -m pytest tests/test_mlflow_ui.py -v
+```
+
+Pytest is included in Poetry's `dev` dependency group. With the environment
+activated, run `poetry install --with dev --no-root` to install it. Run the full
+suite with `make test` or `.env/bin/python -m pytest`. Tests use fresh configuration
+fixtures, temporary paths, and parametrized cases; they do not need production
+datasets or a running MLflow server. For a focused run, for example:
+
+```bash
+.env/bin/python -m pytest tests/test_feature_selection.py -v
+.env/bin/python -m pytest -k temporal -v
 ```
 
 ### Configuration and a future remote server

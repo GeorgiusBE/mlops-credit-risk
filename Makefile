@@ -53,7 +53,7 @@ help:
 	  '  make joint          Run joint removals, save comparisons, and STOP for your review.' \
 	  '  make confirm-plan   Inspect the candidates YOU choose and temporal windows.' \
 	  '  make confirm        Validate your explicit shortlist using a completed joint study.' \
-	  '  make test           Run the test suite; no running server required.' \
+	  '  make test           Run the pytest suite; no running server required.' \
 	  '  make dvc-status     Check whether tracked data matches its DVC snapshot.' \
 	  '  make dvc-snapshot   Cache current raw inputs and final training inputs.' \
 	  '' \
@@ -113,7 +113,7 @@ confirm: mlflow-status
 	@$(PYTHON_CMD) feature_selection/confirm_features.py $(TRAIN_ARGS) $(CONFIRM_ARGS) $(MANUAL_ARGS) --stage temporal
 
 test: check-env
-	@$(PYTHON_CMD) -m unittest discover -s tests -v
+	@$(PYTHON_CMD) -m pytest
 
 dvc-status: check-env
 	@$(DVC_CMD) status
