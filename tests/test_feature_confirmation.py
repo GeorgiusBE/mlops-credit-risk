@@ -35,7 +35,10 @@ class FeatureConfirmationTest(unittest.TestCase):
         self.assertEqual(self.raw_config["candidate_groups"], [])
         self.assertNotIn("ablations", self.raw_config)
         for groups in ([], ["deposit_history"], ["deposit_history", "deposit_history"],
-                       ["deposit_history", "unknown"], "deposit_history"):
+                       ["deposit_history", "unknown"], "deposit_history",
+                       ["deposit_history", "without_deposit_history"],
+                       ["without_deposit_history", "without_unknown"],
+                       ["without_debit_card_history__and__deposit_history", "without_affordability_ratios"]):
             with self.subTest(groups=groups), self.assertRaises(ValueError):
                 configure_joint_groups(self.raw_config, groups)
         with ExitStack() as stack:
@@ -51,6 +54,25 @@ class FeatureConfirmationTest(unittest.TestCase):
             self.assertIn("Choose at least two groups", error.getvalue())
             load.assert_not_called()
             tracking.assert_not_called()
+
+    def test_prefixed_joint_groups_preserve_membership_and_existing_studies(self):
+        """Accept copied single-removal run names in CLI/config and reuse checks."""
+        prefixed = [f"without_{group}" for group in self.groups]
+        for groups in (prefixed, [self.groups[0], *prefixed[1:]]):
+            with self.subTest(groups=groups):
+                configured = configure_joint_groups(self.raw_config, groups)
+                self.assertEqual(configured, self.config)
+                self.assertEqual(plan_confirmation(configured, self.features), plan_confirmation(self.config, self.features))
+                inherited = inherit_joint_plan(self.raw_config, self.config, groups)
+                self.assertEqual(inherited["candidate_groups"], self.groups)
+        self.assertEqual(prefixed, [f"without_{group}" for group in self.groups])
+        config = copy.deepcopy(self.raw_config)
+        config["candidate_groups"] = prefixed
+        self.assertEqual(configure_joint_groups(config, config["candidate_groups"]), self.config)
+        self.assertEqual(config["candidate_groups"], prefixed)
+        reviewed = copy.deepcopy(self.config)
+        reviewed["candidate_groups"] = prefixed
+        self.assertEqual(inherit_joint_plan(self.raw_config, reviewed, self.groups)["candidate_groups"], self.groups)
 
     def test_joint_combinations_follow_arbitrary_human_group_choices(self):
         """Generate only chosen subsets, with stable labels and no three-group limit."""
@@ -164,6 +186,24 @@ class FeatureConfirmationTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 select_confirmation_sets(sets, invalid)
 
+    def test_shortlist_accepts_optional_prefix_and_rejects_duplicate_aliases(self):
+        """Resolve short names to existing model identities before fitting or reuse."""
+        names = ["debit_card_history__and__deposit_history", "deposit_history"]
+        self.config["confirmation"]["selected_configurations"] = names
+        sets = plan_confirmation(self.config, self.features)
+        expected = ["all_eligible", *(f"without_{name}" for name in names)]
+        selected = select_confirmation_sets(sets, names)
+        self.assertEqual(list(selected), expected)
+        self.assertEqual(selected, select_confirmation_sets(sets, expected[1:]))
+        self.assertEqual(selected, select_confirmation_sets(sets, [names[0], expected[2]]))
+        self.assertEqual(names, ["debit_card_history__and__deposit_history", "deposit_history"])
+        with self.assertRaisesRegex(ValueError, "duplicates"):
+            select_confirmation_sets(sets, ["deposit_history", "without_deposit_history"])
+        with self.assertRaisesRegex(ValueError, "Available reduced configurations"):
+            select_confirmation_sets(sets, ["unknown_group"])
+        legacy = {"full": {}, "without_legacy_label": {}, "custom_label": {}}
+        self.assertEqual(list(select_confirmation_sets(legacy, ["legacy_label", "custom_label"])), list(legacy))
+
     def test_temporal_cli_requires_human_choice_and_review_before_data_loading(self):
         """Missing choices or review ID must fail before MLflow calls or training."""
         cases = [
@@ -208,9 +248,9 @@ class FeatureConfirmationTest(unittest.TestCase):
                 stack.callback(confirmation.mlflow.set_tracking_uri, previous_uri)
                 arguments = ["confirm_features.py", "--stage", stage]
                 if stage == "temporal":
-                    arguments += ["--joint-study-id", "reviewed-study", "--candidates", *chosen]
+                    arguments += ["--joint-study-id", "reviewed-study", "--candidates", *(name.removeprefix("without_") for name in chosen)]
                 else:
-                    arguments += ["--candidate-groups", *self.groups]
+                    arguments += ["--candidate-groups", *(f"without_{group}" for group in self.groups)]
                 stack.enter_context(patch("sys.argv", arguments))
                 stack.enter_context(redirect_stdout(io.StringIO()))
                 stack.enter_context(patch.object(baseline, "load_config", return_value=copy.deepcopy(self.raw_config)))
@@ -248,6 +288,8 @@ class FeatureConfirmationTest(unittest.TestCase):
                     for call in fits.call_args_list:
                         self.assertEqual(list(call.args[1]["ablations"]), ["all_eligible", *chosen])
                     self.assertEqual(recorded["confirmation_selection.json"]["selected_configurations"], chosen)
+                    self.assertEqual(recorded["confirmation_selection.json"]["requested_configurations"], [name.removeprefix("without_") for name in chosen])
+                    self.assertEqual(recorded["configuration.json"]["confirmation"]["selected_configurations"], chosen)
                     self.assertEqual(recorded["confirmation_selection.json"]["selection_method"], "human")
                     self.assertNotIn("recommendation.json", recorded)
                     confirmation.mlflow.set_tag.assert_called_with("result_status", "awaiting_human_feature_decision")

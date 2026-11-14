@@ -4,6 +4,12 @@ The preprocessing notebooks generate `dataset/processed/train_base_engineered.pa
 and `dataset/processed/model_feature_eligibility.csv`. The baseline script trains
 LightGBM with the eligible columns and evaluates on later validation weeks.
 
+Raw inputs and the final training dataset/feature inventory are versioned with
+DVC using a local cache. Run `make dvc-status` to inspect them and
+`make dvc-snapshot` after changing the data. Commit the updated `.dvc` metadata
+to Git to record a version. See [the DVC setup and command guide](docs/data-versioning.md)
+for installation, the tracked paths, restoring versions, and adding storage later.
+
 ## Project commands with Make
 
 Run `make` or `make help` from the repository root in WSL/Linux to list the
@@ -22,6 +28,8 @@ the project environment has been installed. The default command only prints help
 | `make confirm-plan` | Inspect your explicit shortlist and temporal validation windows. |
 | `make confirm` | Validate your chosen feature sets using a completed joint/review study. |
 | `make test` | Run the tests without needing a running MLflow server. |
+| `make dvc-status` | Check tracked data against its current DVC snapshot. |
+| `make dvc-snapshot` | Cache raw inputs and final training inputs; update DVC metadata. |
 
 Training targets check MLflow first and do not launch a background server.
 Use a second terminal for training when the server is running in the first.
@@ -47,7 +55,10 @@ joint review's parent run ID, and the configuration names you choose from its
 table. `CANDIDATE_GROUPS` chooses which groups enter joint testing; `CANDIDATES`
 chooses which resulting feature sets enter temporal validation. Choose one or
 more reduced sets for temporal validation; the full baseline is always the
-control. `make confirm-plan` accepts the same options and reads the recorded
+control. Both options accept `without_` names: use individual removals such as
+`without_deposit_history` in `CANDIDATE_GROUPS`, and individual or combined
+removals in `CANDIDATES`. Plain names remain accepted for compatibility.
+`make confirm-plan` accepts the same options and reads the recorded
 joint plan from MLflow without training or logging new runs.
 Keep `group-ablation-first-pass` and its child runs available: joint comparison
 reuses that screening study's individual removals. Make does not delete or restore runs.
@@ -146,7 +157,20 @@ make joint CANDIDATE_GROUPS="YOUR_FIRST_GROUP YOUR_SECOND_GROUP" RUN_NAME=joint-
 `candidate_groups` in `feature_selection/configs/joint_confirmation.json` is
 empty by default. Supply a space-separated `CANDIDATE_GROUPS` list to Make,
 `--candidate-groups` with separate names to the Python script, or edit that JSON
-list. At least two distinct, known groups are required. The runner generates
+list. Names with the `without_` prefix are accepted here too, so you can copy
+individual-removal names from the group-ablation table, for example:
+
+```bash
+make joint-plan CANDIDATE_GROUPS="without_deposit_history without_affordability_ratios without_debit_card_history"
+make joint CANDIDATE_GROUPS="without_deposit_history without_affordability_ratios without_debit_card_history" RUN_NAME=joint-review-v1
+```
+
+These are example choices; no candidate groups are selected by default. Plain
+group names still work, including mixed lists of plain and prefixed names.
+Both forms resolve to the same group; supplying both for one group is rejected
+as a duplicate. Recorded group membership uses plain group names, while model
+configuration names retain `without_`. At least two distinct, known groups are
+required. The runner generates
 every pair and larger removal combination from exactly those groups, fits a
 fresh baseline, and combines those results with the chosen groups' existing
 individual removals. You do not need to maintain a hard-coded `ablations` map.
@@ -189,6 +213,13 @@ with separate names to the Python script). Alternatively, edit
 `confirmation.selected_configurations` in the configuration file. It is empty
 by default; there is no automatic top-two fallback or fixed candidate count.
 The baseline is added automatically, so omit `all_eligible` from the list.
+The `without_` prefix is optional: `deposit_history` and
+`without_deposit_history` select the same removal configuration. Similarly,
+`debit_card_history__and__deposit_history` selects the recorded
+`without_debit_card_history__and__deposit_history` configuration. Exact recorded
+names remain supported, including legacy names; comparisons and saved MLflow
+records use the recorded names. Supplying both aliases for the same configuration
+is rejected as a duplicate.
 
 For example, if your joint study included deposit history and affordability
 ratios, and **you choose** those two individual removals for temporal validation:
@@ -222,7 +253,7 @@ The temporal study logs:
 - `combination_comparison.json` and `source_runs.json`: all removal patterns for the chosen groups and their source model runs.
 - `joint_group_selection.json`: the group choices inherited from the reviewed study.
 - `confirmation_candidates.json`: your chosen sets with their exact feature lists, plus the baseline.
-- `confirmation_selection.json`: the human shortlist, whether it came from the CLI or configuration, and the reviewed study ID.
+- `confirmation_selection.json`: the human shortlist using recorded configuration names, the supplied names before alias resolution, whether they came from the CLI or configuration, and the reviewed study ID.
 - `confirmation_by_window.json` and `confirmation_summary.json`: paired changes against each window's own baseline.
 - `joint_removal_deltas.png`, `confirmation_deltas.png`, and `confirmation_weekly_gini.png`: readable plots.
 - One `summary-...` child run per chosen configuration and baseline, with mean/worst-window AUC and stability deltas for native MLflow charts. These are summary records, not newly fitted models.

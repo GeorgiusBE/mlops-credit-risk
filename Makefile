@@ -19,6 +19,12 @@ joint joint-plan confirm confirm-plan: CONFIG ?= feature_selection/configs/joint
 # Keep paths, URLs, and run names as single shell arguments, including apostrophes.
 shquote = '$(subst ','"'"',$(1))'
 PYTHON_CMD = $(call shquote,$(PYTHON))
+DVC_CMD = $(PYTHON_CMD) -m dvc
+DVC_DATA = dataset/raw/train dataset/raw/test \
+	dataset/raw/feature_definitions.csv dataset/raw/feature_definitions_enhanced.csv \
+	dataset/raw/sample_submission.csv \
+	dataset/processed/train_base_engineered.parquet \
+	dataset/processed/model_feature_eligibility.csv
 TRAIN_ARGS = --config $(call shquote,$(CONFIG)) \
 	--processed-dir $(call shquote,$(PROCESSED_DIR)) \
 	--threads $(call shquote,$(THREADS)) \
@@ -30,7 +36,7 @@ CONFIRM_ARGS = $(if $(strip $(SCREENING_STUDY_ID)),--screening-study-id $(call s
 	$(if $(strip $(CANDIDATE_GROUPS)),--candidate-groups $(foreach group,$(CANDIDATE_GROUPS),$(call shquote,$(group))))
 MANUAL_ARGS = $(if $(strip $(CANDIDATES)),--candidates $(foreach candidate,$(CANDIDATES),$(call shquote,$(candidate))))
 
-.PHONY: help check-env mlflow mlflow-status baseline ablation-plan ablation joint-plan joint confirm-plan confirm test
+.PHONY: help check-env mlflow mlflow-status baseline ablation-plan ablation joint-plan joint confirm-plan confirm test dvc-status dvc-snapshot
 
 help:
 	@printf '%s\n' \
@@ -48,6 +54,8 @@ help:
 	  '  make confirm-plan   Inspect the candidates YOU choose and temporal windows.' \
 	  '  make confirm        Validate your explicit shortlist using a completed joint study.' \
 	  '  make test           Run the test suite; no running server required.' \
+	  '  make dvc-status     Check whether tracked data matches its DVC snapshot.' \
+	  '  make dvc-snapshot   Cache current raw inputs and final training inputs.' \
 	  '' \
 	  'Options (NAME=value after the command):' \
 	  '  RUN_NAME, THREADS, CONFIG, PROCESSED_DIR, TRACKING_URI, EXPERIMENT_NAME' \
@@ -56,13 +64,15 @@ help:
 	  '  SCREENING_STUDY_ID   Group-ablation study to reuse; temporal inherits the joint choice.' \
 	  '  JOINT_STUDY_ID       Completed joint/review study ID; required for confirm.' \
 	  '  CANDIDATE_GROUPS     Groups YOU choose after group ablation for joint testing.' \
+	  '                      Accepts without_group_name or plain group_name.' \
 	  '                      Choose at least two, or edit candidate_groups in CONFIG.' \
 	  '  CANDIDATES          Space-separated configuration names YOU choose.' \
+	  '                      The without_ prefix is optional.' \
 	  '                      Or edit confirmation.selected_configurations in CONFIG.' \
 	  '' \
 	  'Examples:' \
 	  '  make ablation RUN_NAME=group-ablation-v2' \
-	  '  make joint CANDIDATE_GROUPS="your_chosen_groups" RUN_NAME=joint-review-v1' \
+	  '  make joint CANDIDATE_GROUPS="without_deposit_history without_affordability_ratios" RUN_NAME=joint-review-v1' \
 	  '  make confirm JOINT_STUDY_ID=your_review_id CANDIDATES="your_chosen_names"' \
 	  '  make -n confirm     Print the commands without executing them.' \
 	  '' \
@@ -104,3 +114,9 @@ confirm: mlflow-status
 
 test: check-env
 	@$(PYTHON_CMD) -m unittest discover -s tests -v
+
+dvc-status: check-env
+	@$(DVC_CMD) status
+
+dvc-snapshot: check-env
+	@$(DVC_CMD) add $(DVC_DATA)

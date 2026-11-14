@@ -1,8 +1,15 @@
 # Local datasets and generated outputs
-/dataset/*
+# ?* requires a nonempty child name so DVC can discover directories ending in /.
+/dataset/?*
 !/dataset/raw/
-/dataset/raw/*
+!/dataset/processed/
+/dataset/raw/?*
+!/dataset/raw/*.dvc
+!/dataset/raw/.gitignore
 !/dataset/raw/training_schema.drawio
+/dataset/processed/?*
+!/dataset/processed/*.dvc
+!/dataset/processed/.gitignore
 
 # Virtual environments and local configuration
 .env

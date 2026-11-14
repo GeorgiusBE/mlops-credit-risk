@@ -1,0 +1,5 @@
+outs:
+- md5: 8d38ba848a1d39b44785d7be43d85abc
+  size: 62800
+  hash: md5
+  path: model_feature_eligibility.csv

@@ -28,6 +28,8 @@ def configure_joint_groups(config, groups):
 
     Keep the source configuration unchanged. Stable names use sorted group names,
     so changing the order of a CLI list does not change the experiment identity.
+    Accept plain group names or single-removal names prefixed with ``without_``;
+    store plain names internally and reject duplicate aliases of the same group.
     Individual removals are reused from screening; only pairs and larger joint
     removals, plus a fresh full baseline, need fitting in this phase.
     """
@@ -35,11 +37,15 @@ def configure_joint_groups(config, groups):
         raise ValueError("candidate_groups must be a list of group names.")
     if len(groups) < 2:
         raise ValueError("Choose at least two groups after group ablation; set CANDIDATE_GROUPS or candidate_groups in the configuration.")
+    groups = [name if name in config["feature_groups"] else name.removeprefix("without_") for name in groups]
     if len(groups) != len(set(groups)):
-        raise ValueError("Candidate groups must not contain duplicates.")
+        raise ValueError("Candidate groups must not contain duplicates, including aliases of the same group.")
     unknown = set(groups) - set(config["feature_groups"])
     if unknown:
-        raise ValueError(f"Unknown candidate groups: {sorted(unknown)}")
+        raise ValueError(
+            f"Unknown candidate groups: {sorted(unknown)}. "
+            f"Choose individual groups from {list(config['feature_groups'])}, with or without the without_ prefix."
+        )
     result = copy.deepcopy(config)
     result["candidate_groups"] = list(groups)
     result["ablations"] = {"all_eligible": []}
@@ -61,8 +67,8 @@ def inherit_joint_plan(config, reviewed, requested_groups=None, *, inherit_scree
     recorded_groups = reviewed.get("candidate_groups", [])
     result = configure_joint_groups(config, recorded_groups)
     if requested_groups:
-        configure_joint_groups(config, requested_groups)
-        if set(requested_groups) != set(recorded_groups):
+        requested = configure_joint_groups(config, requested_groups)
+        if set(requested["candidate_groups"]) != set(result["candidate_groups"]):
             raise ValueError("Candidate groups differ from the reviewed joint study; use its recorded groups or create a new joint study.")
     if "ablations" not in reviewed:
         raise ValueError("The reviewed study does not contain a joint-removal plan.")
@@ -132,6 +138,8 @@ def plan_confirmation(config, features):
 def select_confirmation_sets(feature_sets, requested, *, required=True):
     """Validate a human shortlist, retain its order, and add the baseline control.
 
+    Accept exact recorded names or their aliases with ``without_`` omitted.
+    Return recorded names so reuse, comparison, and logging stay consistent.
     Never infer candidates from scores or a candidate count. An empty shortlist
     is valid while reviewing a plan, but cannot start temporal validation.
     """
@@ -141,15 +149,20 @@ def select_confirmation_sets(feature_sets, requested, *, required=True):
         if required:
             raise ValueError("Choose configurations after reviewing joint results; set CANDIDATES or confirmation.selected_configurations.")
         return {}
-    if len(requested) != len(set(requested)):
-        raise ValueError("Selected configurations must not contain duplicates.")
-    unknown = set(requested) - set(feature_sets)
+    resolved = [name if name in feature_sets else f"without_{name}" for name in requested]
+    unknown = {name for name, recorded in zip(requested, resolved) if recorded not in feature_sets}
     if unknown:
-        raise ValueError(f"Unknown selected configurations: {sorted(unknown)}")
+        available = [name for name in feature_sets if name != next(iter(feature_sets))]
+        raise ValueError(
+            f"Unknown selected configurations: {sorted(unknown)}. "
+            f"Available reduced configurations: {available}. The without_ prefix is optional."
+        )
+    if len(resolved) != len(set(resolved)):
+        raise ValueError("Selected configurations must not contain duplicates, including aliases of the same configuration.")
     reference_name = next(iter(feature_sets))
-    if reference_name in requested:
+    if reference_name in resolved:
         raise ValueError("The full baseline is included automatically; select reduced configurations only.")
-    return {name: feature_sets[name] for name in [reference_name, *requested]}
+    return {name: feature_sets[name] for name in [reference_name, *resolved]}
 
 
 def read_json_artifact(client, run_id, name):
@@ -345,8 +358,8 @@ def main():
     parser.add_argument("--stage", choices=("joint", "temporal"), default="temporal", help="Joint comparison for review, or temporal validation of your chosen sets.")
     parser.add_argument("--screening-study-id", help="Override the original group-ablation study ID stored in the configuration.")
     parser.add_argument("--joint-study-id", help="Completed joint-review or fitted joint-study ID; required for temporal validation.")
-    parser.add_argument("--candidate-groups", nargs="+", help="Groups you choose after group ablation; generates their joint combinations.")
-    parser.add_argument("--candidates", nargs="+", help="Configuration names you choose for temporal validation; overrides the config list.")
+    parser.add_argument("--candidate-groups", nargs="+", help="Groups you choose after group ablation, with or without the without_ prefix; generates their joint combinations.")
+    parser.add_argument("--candidates", nargs="+", help="Configuration names for temporal validation, with or without the without_ prefix; overrides the config list.")
     parser.add_argument("--dry-run", action="store_true", help="Inspect without training or logging runs; may read MLflow metadata when a joint study ID is supplied.")
     args = parser.parse_args()
     if args.threads < 1:
@@ -358,6 +371,7 @@ def main():
         config["confirmation"]["selected_configurations"] = list(args.candidates)
     features = baseline.eligible_features(args.processed_dir / "model_feature_eligibility.csv")
     requested = config["confirmation"].get("selected_configurations", [])
+    requested_inputs = requested
     groups = args.candidate_groups if args.candidate_groups is not None else config.get("candidate_groups", [])
     client = None
     try:
@@ -386,6 +400,9 @@ def main():
         all_sets = plan_confirmation(config, features)
         reference_name = next(iter(all_sets))
         selected_sets = select_confirmation_sets(all_sets, requested, required=args.stage == "temporal" and not args.dry_run)
+        if selected_sets:
+            requested = [name for name in selected_sets if name != reference_name]
+            config["confirmation"]["selected_configurations"] = requested
     except ValueError as exc:
         parser.error(str(exc))
     if args.dry_run:
@@ -465,6 +482,7 @@ def main():
         mlflow.log_dict(selected_sets, "confirmation_candidates.json")
         mlflow.log_dict({
             "selection_method": "human", "selected_configurations": requested,
+            "requested_configurations": requested_inputs,
             "selection_source": "command_line" if args.candidates is not None else "configuration",
             "reviewed_study_id": args.joint_study_id, "baseline_control": reference_name,
         }, "confirmation_selection.json")
