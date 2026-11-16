@@ -4,6 +4,10 @@ The preprocessing notebooks generate `dataset/processed/train_base_engineered.pa
 and `dataset/processed/model_feature_eligibility.csv`. The baseline script trains
 LightGBM with the eligible columns and evaluates on later validation weeks.
 
+For a detailed explanation of preprocessing, feature selection, Optuna tuning,
+MLflow provenance, and final refitting, read the
+[credit risk modelling workflow reference](docs/credit-risk-modelling-workflow.md).
+
 Raw inputs and the final training dataset/feature inventory are versioned with
 DVC using a local cache. Run `make dvc-status` to inspect them and
 `make dvc-snapshot` after changing the data. Commit the updated `.dvc` metadata
@@ -27,6 +31,10 @@ the project environment has been installed. The default command only prints help
 | `make joint` | Run joint removals, save the comparison, and stop for your review. |
 | `make confirm-plan` | Inspect your explicit shortlist and temporal validation windows. |
 | `make confirm` | Validate your chosen feature sets using a completed joint/review study. |
+| `make tune-plan` | Inspect the 17-feature Optuna study, windows, and search space. |
+| `make tune` | Run tuning and save the selected fixed-round final refit. |
+| `make evaluate-test-plan MODEL_RUN_ID=...` | Check the saved refit and input hashes without reading test rows. |
+| `make evaluate-test MODEL_RUN_ID=...` | Evaluate the frozen model on its recorded test weeks and log results. |
 | `make test` | Run the pytest suite without needing a running MLflow server. |
 | `make dvc-status` | Check tracked data against its current DVC snapshot. |
 | `make dvc-snapshot` | Cache raw inputs and final training inputs; update DVC metadata. |
@@ -267,6 +275,126 @@ Temporal validation requires `--joint-study-id` (or Make's `JOINT_STUDY_ID`).
 It accepts the review parent or a compatible completed fitted joint study.
 All commands retain the existing tracking URI, experiment, configuration, and
 thread options; no permanent model/report exports are written to processed data.
+
+## Optuna tuning and final refit
+
+The final feature decision is **`without_deposit_history`**, chosen on
+15 November 2026: use 17 inputs, excluding `deposit_opening_earliest_days_ago`,
+`deposit_opening_latest_days_ago`, and `deposit_opening_span_days`.
+The explicit decision, source temporal run, search ranges, and stopping settings
+live in `hyperparameter_tuning/configs/lightgbm.json`. The loader projects exactly
+these 17 columns from the existing DVC-tracked inputs. The 20-input inventory
+and earlier ablation configurations remain the sources for historical comparisons.
+
+Install the updated locked dependencies, inspect the plan, then launch the study
+with MLflow running in another terminal:
+
+```bash
+source .env/bin/activate
+poetry install --no-root
+make tune-plan
+# First terminal: make mlflow
+# Second terminal:
+make tune STUDY_NAME=lightgbm-optuna-v1 N_TRIALS=30
+```
+
+`N_TRIALS` is the **total attempt budget**, including the first trial with the
+current parameter settings, failed/interrupted attempts, and attempts already
+recorded when resuming. Each trial trains three separate models using expanding
+training windows and validation blocks 36–49, 50–63, and 64–77. AUC early
+stopping uses patience 40 and a cap of 2,000 boosting rounds. The control uses
+the same enlarged cap as search trials; it is not a reuse of the historical
+400-round baseline fit. The seeded TPE sampler maximizes the equally weighted
+mean of the three validation Gini stability scores. AUC, average precision,
+log loss, worst-window stability, per-window best iterations, duration, and
+weekly metrics are also recorded. `reached_round_cap=1` identifies windows
+whose best iteration reached the cap; review these before accepting the range.
+
+One MLflow parent in `credit-risk` groups all trial children. Each trial stores
+parameters, scores, split weeks, and training-only categorical vocabularies.
+Trial models are not saved. After tuning, the selected trial's three best
+iterations determine the final round count: take their median, rounding halves
+up if an even number of windows is configured. A fresh model learns categories
+and fits on all development weeks **0–77**, with that fixed `n_estimators` and
+**no early stopping or validation set**. Its `selected-model` child contains the
+loadable model, feature order, dtypes, categorical levels, and source trial ID.
+Validation scores remain attached to the source trial; they are not reported
+as scores for the larger final refit. Weeks **78–91 are never loaded or
+evaluated** by the tuning workflow. Final-test evaluation uses the separate
+command below.
+
+The parent includes `trial_comparison.json`, `selected_trial.json`,
+`selected_model.json`, the full configuration, data/inventory hashes, runtime
+versions, and copies/hashes of the runner, shared loader, and dependency files.
+All model/report artifacts go through MLflow; they are not written to processed
+data. Windows are loaded and released sequentially to bound memory usage.
+
+Optuna's persistent history is in `.optuna/studies.db`, separate from MLflow.
+To extend the same study from 30 to 50 total attempts:
+
+```bash
+make tune STUDY_NAME=lightgbm-optuna-v1 N_TRIALS=50 RESUME=1
+# Optional optimization time budget for an invocation (refit time is additional):
+make tune STUDY_NAME=lightgbm-optuna-v2 N_TRIALS=30 TIMEOUT=3600
+```
+
+`TIMEOUT` is checked between trials; a running trial finishes all its windows.
+The best completed trial is refitted even if the time limit ends optimization
+before the attempt budget is exhausted. Reusing a study name requires
+`RESUME=1`; resume rejects changes to data, inventory, selected features,
+configuration, code, dependencies, runtime, threads, or MLflow destination.
+An exclusive local lock prevents simultaneous workers on the same Optuna
+database. Interrupted attempts are retained as failed attempts, and resume uses
+the same MLflow parent. If the selected trial is unchanged and its final run
+finished, resume reuses its saved refit. A new winner gets a new refit; earlier
+selected models remain in the experiment history.
+
+Fresh sequential studies are seeded. Resuming retains observations but restarts
+the sampler's random generator, so its suggestions need not match an uninterrupted
+run exactly. Back up `.optuna/` along with the complete `.mlflow/` directory.
+`OPTUNA_DB`, `STUDY_NAME`, `N_TRIALS`, `RESUME`, and `TIMEOUT` supplement the
+existing Make options. The equivalent Python entry point is
+`python hyperparameter_tuning/tune.py --help`.
+
+These validation blocks have already supported feature selection and now support
+tuning; their scores are development evidence, not an independent final-test result.
+
+## Final test evaluation
+
+Once tuning and model selection are finished, evaluate the existing saved
+refit. This loads its frozen metadata from MLflow, not the current tuning JSON.
+For the selected refit from `lightgbm-optuna-v1`:
+
+```bash
+make evaluate-test-plan MODEL_RUN_ID=15b66824a94b48eca0156f0009cbafb0
+make evaluate-test MODEL_RUN_ID=15b66824a94b48eca0156f0009cbafb0
+```
+
+MLflow must be running. The plan checks model identity, feature/category metadata,
+training/test separation, dataset/inventory hashes, and scoring-library versions.
+It does not read test rows or create a run. Actual evaluation reads only weeks
+78–91, applies the saved 17-feature order, dtypes, and training categorical
+levels, and predicts with all 422 saved boosting rounds. Unseen categories
+become missing values, with counts recorded. The evaluator never fits a model,
+changes its parameters, or chooses a threshold from the test results.
+
+The `selected-model-test` child of `selected-model` records `test_gini_stability`,
+`test_roc_auc`, `test_average_precision`, `test_log_loss`, stability components,
+weekly metrics, row/default counts, and evaluation provenance. The aggregate
+`test_*` metrics also appear on the source `selected-model` run and its MLflow
+logged model, so its performance is easy to find. The source refit and study
+receive a `test_evaluation_run_id` link and `result_status=test_evaluated`.
+The saved training artifacts remain the record of how the original fit was made.
+
+Artifacts include `test_metrics.json`, `test_weekly_metrics.json`,
+`unseen_category_counts.json`, `evaluation_provenance.json`, and
+`evaluation_summary.json`. A repeated command reuses the completed evaluation
+for this model; it does not rescore test rows. An exclusive local lock prevents
+two evaluation commands in the checkout from racing. `THREADS`, `PROCESSED_DIR`,
+`TRACKING_URI`, `RUN_NAME`, and `PYTHON` are supported Make options.
+
+These are final assessment results for the frozen model. Further parameter or
+feature selection based on them would make the test segment development data.
 
 ## Local MLflow
 

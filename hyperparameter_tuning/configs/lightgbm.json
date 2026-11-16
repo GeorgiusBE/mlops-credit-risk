@@ -1,0 +1,55 @@
+{
+  "model": {
+    "objective": "binary",
+    "metric": "auc",
+    "n_estimators": 2000,
+    "learning_rate": 0.05,
+    "num_leaves": 31,
+    "max_depth": -1,
+    "min_child_samples": 20,
+    "colsample_bytree": 1.0,
+    "reg_alpha": 0.0,
+    "reg_lambda": 0.0,
+    "random_state": 42,
+    "deterministic": true,
+    "force_col_wise": true,
+    "verbosity": -1
+  },
+  "early_stopping_rounds": 40,
+  "split": {
+    "train_start": 0,
+    "train_end": 63,
+    "validation_end": 77,
+    "test_start": 78,
+    "test_end": 91
+  },
+  "feature_selection": {
+    "name": "without_deposit_history",
+    "selection_method": "human",
+    "decided_on": "2026-11-15",
+    "reason": "User selected the deposit-history exclusion after temporal review.",
+    "source_temporal_run_id": "f2a06005d5334643880c86bf36f1afd8",
+    "expected_feature_count": 17,
+    "excluded_features": [
+      "deposit_opening_earliest_days_ago",
+      "deposit_opening_latest_days_ago",
+      "deposit_opening_span_days"
+    ]
+  },
+  "windows": [
+    {"name": "weeks_36_49", "train_end": 35, "validation_end": 49},
+    {"name": "weeks_50_63", "train_end": 49, "validation_end": 63},
+    {"name": "weeks_64_77", "train_end": 63, "validation_end": 77}
+  ],
+  "sampler_seed": 42,
+  "refit_rounds_rule": "median_best_iteration",
+  "search_space": {
+    "learning_rate": {"type": "float", "low": 0.01, "high": 0.15, "log": true},
+    "num_leaves": {"type": "int", "low": 8, "high": 64},
+    "max_depth": {"type": "categorical", "choices": [-1, 3, 4, 5, 6, 7, 8]},
+    "min_child_samples": {"type": "int", "low": 20, "high": 500},
+    "colsample_bytree": {"type": "float", "low": 0.6, "high": 1.0},
+    "reg_alpha": {"type": "float", "low": 0.0, "high": 10.0},
+    "reg_lambda": {"type": "float", "low": 0.0, "high": 10.0}
+  }
+}

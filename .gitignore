@@ -36,3 +36,6 @@ htmlcov/
 /mlruns/
 /mlartifacts/
 /mlflow.db*
+
+# Persistent local Optuna studies
+/.optuna/

@@ -167,13 +167,14 @@ def eligible_features(inventory_path):
     return features
 
 
-def load_training_data(processed_dir, config, threads):
+def load_training_data(processed_dir, config, threads, *, features=None):
     """Load selected training/validation rows once, with training-only categories.
 
     DuckDB reads the eligible columns and filters before returning pandas frames.
     Query week metadata for all rows to verify the fixed split, but never load
-    test labels or test feature values. Dataset fingerprints are calculated once
-    and shared across all candidates in the study.
+    test labels or test feature values. A caller can select an explicit subset
+    of eligible inputs before DuckDB reads feature values. Dataset fingerprints
+    identify the original data and inventory, including when selecting a subset.
     """
     processed_dir = Path(processed_dir)
     data_path = processed_dir / "train_base_engineered.parquet"
@@ -181,7 +182,11 @@ def load_training_data(processed_dir, config, threads):
     if not data_path.is_file() or not inventory_path.is_file():
         raise FileNotFoundError("Run notebooks 3 and 4 to generate the engineered table and inventory.")
 
-    features = eligible_features(inventory_path)
+    eligible = eligible_features(inventory_path)
+    if features is None:
+        features = eligible
+    elif not features or len(features) != len(set(features)) or not set(features) <= set(eligible):
+        raise ValueError("Selected features must be a nonempty, distinct subset of eligible inputs.")
 
     with duckdb.connect(config={"threads": threads}) as con:
         source = con.read_parquet(str(data_path))

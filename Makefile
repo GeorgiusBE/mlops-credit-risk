@@ -12,9 +12,16 @@ SCREENING_STUDY_ID ?=
 JOINT_STUDY_ID ?=
 CANDIDATES ?=
 CANDIDATE_GROUPS ?=
+STUDY_NAME ?=
+N_TRIALS ?= 30
+OPTUNA_DB ?= .optuna/studies.db
+TIMEOUT ?=
+RESUME ?= 0
+MODEL_RUN_ID ?=
 
 baseline ablation ablation-plan: CONFIG ?= feature_selection/configs/group_ablation.json
 joint joint-plan confirm confirm-plan: CONFIG ?= feature_selection/configs/joint_confirmation.json
+tune tune-plan: CONFIG ?= hyperparameter_tuning/configs/lightgbm.json
 
 # Keep paths, URLs, and run names as single shell arguments, including apostrophes.
 shquote = '$(subst ','"'"',$(1))'
@@ -35,8 +42,16 @@ CONFIRM_ARGS = $(if $(strip $(SCREENING_STUDY_ID)),--screening-study-id $(call s
 	$(if $(strip $(JOINT_STUDY_ID)),--joint-study-id $(call shquote,$(JOINT_STUDY_ID))) \
 	$(if $(strip $(CANDIDATE_GROUPS)),--candidate-groups $(foreach group,$(CANDIDATE_GROUPS),$(call shquote,$(group))))
 MANUAL_ARGS = $(if $(strip $(CANDIDATES)),--candidates $(foreach candidate,$(CANDIDATES),$(call shquote,$(candidate))))
+TUNE_ARGS = --n-trials $(call shquote,$(N_TRIALS)) --storage-path $(call shquote,$(OPTUNA_DB)) \
+	$(if $(strip $(STUDY_NAME)),--study-name $(call shquote,$(STUDY_NAME))) \
+	$(if $(strip $(TIMEOUT)),--timeout $(call shquote,$(TIMEOUT))) \
+	$(if $(filter 1,$(RESUME)),--resume)
+EVAL_ARGS = --processed-dir $(call shquote,$(PROCESSED_DIR)) --threads $(call shquote,$(THREADS)) \
+	--tracking-uri $(call shquote,$(TRACKING_URI)) \
+	$(if $(strip $(MODEL_RUN_ID)),--model-run-id $(call shquote,$(MODEL_RUN_ID))) \
+	$(if $(strip $(RUN_NAME)),--run-name $(call shquote,$(RUN_NAME)))
 
-.PHONY: help check-env mlflow mlflow-status baseline ablation-plan ablation joint-plan joint confirm-plan confirm test dvc-status dvc-snapshot
+.PHONY: help check-env mlflow mlflow-status baseline ablation-plan ablation joint-plan joint confirm-plan confirm tune-plan tune evaluate-test-plan evaluate-test test dvc-status dvc-snapshot
 
 help:
 	@printf '%s\n' \
@@ -53,6 +68,10 @@ help:
 	  '  make joint          Run joint removals, save comparisons, and STOP for your review.' \
 	  '  make confirm-plan   Inspect the candidates YOU choose and temporal windows.' \
 	  '  make confirm        Validate your explicit shortlist using a completed joint study.' \
+	  '  make tune-plan      Inspect the 17-feature Optuna study without training or logging.' \
+	  '  make tune           Tune on three temporal windows and save the selected final refit.' \
+	  '  make evaluate-test-plan  Check a frozen MODEL_RUN_ID without reading test rows.' \
+	  '  make evaluate-test  Evaluate that saved model on its reserved test weeks.' \
 	  '  make test           Run the pytest suite; no running server required.' \
 	  '  make dvc-status     Check whether tracked data matches its DVC snapshot.' \
 	  '  make dvc-snapshot   Cache current raw inputs and final training inputs.' \
@@ -69,6 +88,12 @@ help:
 	  '  CANDIDATES          Space-separated configuration names YOU choose.' \
 	  '                      The without_ prefix is optional.' \
 	  '                      Or edit confirmation.selected_configurations in CONFIG.' \
+	  '  STUDY_NAME          Persistent Optuna name; use the same name with RESUME=1.' \
+	  '  N_TRIALS            Total trial attempts, including control and earlier attempts (30).' \
+	  '  OPTUNA_DB           Local study database (.optuna/studies.db).' \
+	  '  TIMEOUT             Optimization seconds for this invocation; refit is additional.' \
+	  '  RESUME              Set to 1 to extend a matching existing Optuna study.' \
+	  '  MODEL_RUN_ID        Explicit saved final-refit run ID for test evaluation.' \
 	  '' \
 	  'Examples:' \
 	  '  make ablation RUN_NAME=group-ablation-v2' \
@@ -111,6 +136,18 @@ confirm-plan: check-env
 
 confirm: mlflow-status
 	@$(PYTHON_CMD) feature_selection/confirm_features.py $(TRAIN_ARGS) $(CONFIRM_ARGS) $(MANUAL_ARGS) --stage temporal
+
+tune-plan: check-env
+	@$(PYTHON_CMD) hyperparameter_tuning/tune.py $(TRAIN_ARGS) $(TUNE_ARGS) --dry-run
+
+tune: mlflow-status
+	@$(PYTHON_CMD) hyperparameter_tuning/tune.py $(TRAIN_ARGS) $(TUNE_ARGS)
+
+evaluate-test-plan: mlflow-status
+	@$(PYTHON_CMD) model_evaluation/evaluate_test.py $(EVAL_ARGS) --dry-run
+
+evaluate-test: mlflow-status
+	@$(PYTHON_CMD) model_evaluation/evaluate_test.py $(EVAL_ARGS)
 
 test: check-env
 	@$(PYTHON_CMD) -m pytest
