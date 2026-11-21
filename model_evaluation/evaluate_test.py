@@ -41,18 +41,9 @@ def frozen_model(client, model_run_id):
     logged = client.get_logged_model(model_id)
     if logged.source_run_id != model_run_id or logged.status.name != "READY":
         raise ValueError("The saved model must be ready and belong to the selected refit.")
-    context = read_json(client, model_run_id, "provenance.json")
-    membership = read_json(client, model_run_id, "features.json")
-    dtypes = read_json(client, model_run_id, "feature_dtypes.json")
-    levels = read_json(client, model_run_id, "categorical_levels.json")
+    inputs = read_model_input_metadata(client, model_run_id)
     splits = read_json(client, model_run_id, "split_weeks.json")
-    features, categorical = membership["features"], membership["categorical_features"]
-    if (not features or len(features) != len(set(features)) or baseline.RESERVED_COLUMNS.intersection(features)
-            or features != context["features"] or set(dtypes) != set(features)
-            or set(levels) != set(categorical) or not set(categorical) <= set(features)
-            or {name for name, dtype in dtypes.items() if dtype == "category"} != set(categorical)):
-        raise ValueError("Saved feature order, dtypes, and categorical metadata are inconsistent.")
-    split = context["configuration"]["split"]
+    split = inputs["context"]["configuration"]["split"]
     start, end = splits["held_out_test_range"]
     train = splits["train"]
     if (not train or not all(type(week) is int for week in [*train, start, end])
@@ -60,10 +51,23 @@ def frozen_model(client, model_run_id):
             or [start, end] != [split["test_start"], split["test_end"]]
             or max(train) != split["validation_end"]):
         raise ValueError("The recorded test boundary overlaps training or differs from the frozen configuration.")
-    return {"source": source, "parent_run_id": parent_id, "selection": selection,
-            "model_uri": selection["model_uri"], "model_id": model_id, "context": context,
-            "features": features, "categorical": categorical, "dtypes": dtypes,
-            "levels": levels, "test_range": [start, end]}
+    return {**inputs, "source": source, "parent_run_id": parent_id, "selection": selection,
+            "model_uri": selection["model_uri"], "model_id": model_id, "test_range": [start, end]}
+
+
+def read_model_input_metadata(client, model_run_id):
+    """Read the input contract saved with a model's source run."""
+    context = read_json(client, model_run_id, "provenance.json")
+    membership = read_json(client, model_run_id, "features.json")
+    dtypes = read_json(client, model_run_id, "feature_dtypes.json")
+    levels = read_json(client, model_run_id, "categorical_levels.json")
+    features, categorical = membership["features"], membership["categorical_features"]
+    if (not features or len(features) != len(set(features)) or baseline.RESERVED_COLUMNS.intersection(features)
+            or features != context["features"] or set(dtypes) != set(features)
+            or set(levels) != set(categorical) or not set(categorical) <= set(features)
+            or {name for name, dtype in dtypes.items() if dtype == "category"} != set(categorical)):
+        raise ValueError("Saved feature order, dtypes, and categorical metadata are inconsistent.")
+    return {"context": context, "features": features, "categorical": categorical, "dtypes": dtypes, "levels": levels}
 
 
 def check_inputs(directory, frozen):
@@ -74,11 +78,32 @@ def check_inputs(directory, frozen):
     }
     if fingerprints != frozen["context"]["fingerprints"]:
         raise ValueError("Dataset or feature inventory differs from the saved model's training inputs.")
+    check_scoring_runtime(frozen)
+    return fingerprints
+
+
+def check_scoring_runtime(frozen):
     expected = frozen["context"]["runtime_versions"]
     for name in ("lightgbm", "pandas", "numpy", "scipy", "scikit-learn"):
         if version(name) != expected[name]:
             raise ValueError(f"Scoring package {name} differs from the saved model's environment.")
-    return fingerprints
+
+
+def load_frozen_booster(frozen):
+    model = mlflow.lightgbm.load_model(frozen["model_uri"])
+    if (model.feature_name() != frozen["features"] or
+            (model.pandas_categorical or []) != [frozen["levels"][name] for name in frozen["features"]
+                                                if name in frozen["categorical"]]):
+        raise ValueError("Saved model inputs do not match the feature/category artifacts.")
+    return model
+
+
+def predict_probabilities(model, frame, threads):
+    probabilities = model.predict(frame, num_iteration=-1, num_threads=threads)
+    if (probabilities.shape != (len(frame),) or not np.isfinite(probabilities).all()
+            or ((probabilities < 0) | (probabilities > 1)).any()):
+        raise ValueError("The saved binary model did not produce valid default probabilities.")
+    return probabilities
 
 
 def load_test_frame(directory, frozen, threads):
@@ -94,16 +119,24 @@ def load_test_frame(directory, frozen, threads):
         raise ValueError("Test data must contain every week in the frozen test range.")
     if frame["target"].isna().any() or set(frame["target"].unique()) != {0, 1}:
         raise ValueError("Test labels must contain both binary classes and no missing targets.")
+    prepared, unknown = prepare_model_inputs(frame, frozen)
+    frame[features] = prepared
+    return frame, unknown
+
+
+def prepare_model_inputs(frame, frozen):
+    """Order and cast features with the training vocabulary for each category."""
+    features = frame[frozen["features"]].copy()
     unknown = {}
-    for name in features:
+    for name in frozen["features"]:
         if name in frozen["categorical"]:
             levels = frozen["levels"][name]
-            known = frame[name].isin(levels)
-            unknown[name] = int((frame[name].notna() & ~known).sum())
-            frame[name] = frame[name].where(known).astype(pd.CategoricalDtype(categories=levels))
+            known = features[name].isin(levels)
+            unknown[name] = int((features[name].notna() & ~known).sum())
+            features[name] = features[name].where(known).astype(pd.CategoricalDtype(categories=levels))
         else:
-            frame[name] = frame[name].astype(frozen["dtypes"][name])
-    return frame, unknown
+            features[name] = features[name].astype(frozen["dtypes"][name])
+    return features, unknown
 
 
 def publish_result(client, frozen, result):
@@ -158,11 +191,7 @@ def evaluate_saved_model(model_run_id, processed_dir, tracking_uri, threads=2, *
             result = read_json(client, previous[0].info.run_id, "evaluation_summary.json")
             publish_result(client, frozen, result)
             return {**result, "reused": True}
-        model = mlflow.lightgbm.load_model(frozen["model_uri"])
-        if (model.feature_name() != frozen["features"] or
-                (model.pandas_categorical or []) != [frozen["levels"][name] for name in frozen["features"]
-                                            if name in frozen["categorical"]]):
-            raise ValueError("Saved model inputs do not match the feature/category artifacts.")
+        model = load_frozen_booster(frozen)
         model_hash = hashlib.sha256(model.model_to_string().encode()).hexdigest()
         with mlflow.start_run(experiment_id=frozen["source"].info.experiment_id,
                               run_name=run_name or "selected-model-test", tags={
@@ -189,10 +218,7 @@ def evaluate_saved_model(model_run_id, processed_dir, tracking_uri, threads=2, *
             mlflow.log_artifact(str(Path(baseline.__file__).resolve()), "provenance")
             frame, unknown = load_test_frame(directory, frozen, threads)
             check_inputs(directory, frozen)
-            probabilities = model.predict(frame[frozen["features"]], num_iteration=-1, num_threads=threads)
-            if (probabilities.shape != (len(frame),) or not np.isfinite(probabilities).all()
-                    or ((probabilities < 0) | (probabilities > 1)).any()):
-                raise ValueError("The saved binary model did not produce valid default probabilities.")
+            probabilities = predict_probabilities(model, frame[frozen["features"]], threads)
             metrics, weekly = baseline.evaluate(frame["WEEK_NUM"], frame["target"], probabilities)
             scores = {f"test_{name}": float(value) for name, value in metrics.items()}
             scores.update(test_cases=float(len(frame)), test_defaults=float(frame["target"].sum()))

@@ -75,6 +75,8 @@ the project environment has been installed. The default command only prints help
 | `make tune` | Run tuning and save the selected fixed-round final refit. |
 | `make evaluate-test-plan MODEL_RUN_ID=...` | Check the saved refit and input hashes without reading test rows. |
 | `make evaluate-test MODEL_RUN_ID=...` | Evaluate the frozen model on its recorded test weeks and log results. |
+| `make serve` | Start the prediction API with the registered MLflow champion. |
+| `make ui` | Start the Streamlit form for scoring a credit application. |
 | `make test` | Run the pytest suite without needing a running MLflow server. |
 | `make dvc-status` | Check tracked data against its current DVC snapshot. |
 | `make dvc-snapshot` | Cache raw inputs and final training inputs; update DVC metadata. |
@@ -435,6 +437,66 @@ two evaluation commands in the checkout from racing. `THREADS`, `PROCESSED_DIR`,
 
 These are final assessment results for the frozen model. Further parameter or
 feature selection based on them would make the test segment development data.
+
+## Prediction API
+
+Start `make mlflow` in one terminal if the tracking server is not already
+running. In a second terminal, start the API:
+
+```bash
+make serve
+```
+
+By default, the API resolves `models:/credit-risk@champion` at startup and loads
+that version and the feature metadata from its source run. Restart the API
+after moving the alias to pick up the newly promoted version. To serve a
+candidate assigned to `challenger`, run `make serve MODEL_ALIAS=challenger`.
+`MODEL_NAME` selects the registered model and `TRACKING_URI` points to the
+MLflow server. The API listens locally on port `8000`, configurable with
+`API_PORT`. [Interactive API docs](http://127.0.0.1:8000/docs)
+
+Send one application with `POST /predict`. Supply the primary applicant's
+employment fields and the loan amounts in the same units as the training data.
+Include each application field, using `null` for a missing value other than
+`decision_date`. Each history list contains event dates for this applicant and
+may be omitted when no records are available. Dates use `YYYY-MM-DD`. The
+feature calculations use history events strictly before `decision_date` and
+treat categories absent from training as missing values.
+
+```bash
+curl --fail-with-body http://127.0.0.1:8000/predict \
+  -H 'Content-Type: application/json' \
+  --data '{
+    "decision_date": "2026-10-01",
+    "annuity_amount": 2500,
+    "credit_amount": 38000,
+    "employment_industry": "IT",
+    "income_type": "EMPLOYED",
+    "main_occupation_income": 45000,
+    "employment_start_date": "2021-04-12",
+    "debit_card_opening_dates": ["2020-06-12"],
+    "prior_application_dates": ["2024-03-15", "2025-05-10"],
+    "bureau_update_dates": ["2026-07-20"]
+  }'
+```
+
+The response contains one field, `default_probability`, with the model's
+estimated probability of default between 0 and 1.
+
+### Streamlit prediction form
+
+With the locked dependencies installed, keep `make mlflow` and `make serve`
+running. Start the form in another terminal.
+
+```bash
+make ui
+```
+
+Enter one application and submit it to see the probability of default as a
+percentage. The decision date starts at today. The employment and income
+dropdowns use the loaded model's categories, and history dates can be entered
+one per line. Set `UI_PORT` to change the Streamlit port or `PREDICTION_API_URL`
+to point the form at a different FastAPI base URL. [Open the local form](http://127.0.0.1:8501)
 
 ## Local MLflow
 

@@ -66,9 +66,17 @@ def summarize_historical_dates(cases, history, date_column, feature_prefix):
 
 def engineer_features(con, cleaned, train_dir):
     """Return the original columns plus the 15 engineered features."""
+    histories = (
+        (read_training_history(con, train_dir, source, 1), date_column, feature_prefix)
+        for source, date_column, feature_prefix in HISTORY_DATE_SOURCES
+    )
+    return add_history_features(cleaned, histories)
+
+
+def add_history_features(cleaned, histories):
+    """Apply the same case and history calculations to batch or request data."""
     featured = add_case_features(cleaned)
-    for source, date_column, feature_prefix in HISTORY_DATE_SOURCES:
-        history = read_training_history(con, train_dir, source, 1)
+    for history, date_column, feature_prefix in histories:
         summary = summarize_historical_dates(cleaned, history, date_column, feature_prefix)
         featured = featured.join(summary, "case_id", how="left")
     return featured

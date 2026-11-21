@@ -26,7 +26,7 @@ def invalid_value_counts(cases, kind):
     return dict(zip(names, counts))
 
 
-def clean_table(cases):
+def clean_table(cases, *, report=True):
     """Return a lazy cleaned relation with the original row and column order."""
     date_casts = [
         f"CAST({quote(name)} AS DATE) AS {quote(name)}"
@@ -50,8 +50,9 @@ def clean_table(cases):
     ]
     if replacements:
         cleaned = cleaned.project(f"* REPLACE ({', '.join(replacements)})")
-    print(f"Replaced {sum(infinities.values()):,} infinities and {sum(blanks.values()):,} blank strings; "
-          f"cast {len(date_casts)} date columns.", flush=True)
+    if report:
+        print(f"Replaced {sum(infinities.values()):,} infinities and {sum(blanks.values()):,} blank strings; "
+              f"cast {len(date_casts)} date columns.", flush=True)
     return cleaned
 
 

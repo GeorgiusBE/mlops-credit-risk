@@ -13,6 +13,7 @@ import pytest
 
 from feature_selection import train_baseline as baseline
 from model_evaluation import evaluate_test as evaluation
+from prediction_api import registered_model_metadata
 
 
 @pytest.fixture
@@ -68,6 +69,25 @@ def frozen_refit(tmp_path):
 def call(fixture, **kwargs):
     return evaluation.evaluate_saved_model(fixture["source_id"], fixture["directory"], fixture["tracking"],
                                            threads=1, lock_dir=fixture["directory"] / "locks", **kwargs)
+
+
+def test_serving_keeps_resolved_registry_version_when_alias_moves(frozen_refit):
+    fixture = frozen_refit
+    client = fixture["client"]
+    name = "credit-risk"
+    logged_uri = f"models:/{fixture['model_id']}"
+    first = mlflow.register_model(logged_uri, name)
+    client.set_registered_model_alias(name, "champion", first.version)
+    loaded = registered_model_metadata(client, name, "champion")
+
+    second = mlflow.register_model(logged_uri, name)
+    client.set_registered_model_alias(name, "champion", second.version)
+    restarted = registered_model_metadata(client, name, "champion")
+
+    assert loaded["model_uri"] == f"models:/{name}/{first.version}"
+    assert restarted["model_uri"] == f"models:/{name}/{second.version}"
+    assert loaded["features"] == restarted["features"] == ["amount", "industry"]
+    assert evaluation.load_frozen_booster(loaded).feature_name() == loaded["features"]
 
 
 def test_scores_only_test_rows_without_retraining_and_publishes_model_metrics(frozen_refit, monkeypatch):

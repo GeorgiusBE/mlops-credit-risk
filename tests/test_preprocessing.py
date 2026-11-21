@@ -19,6 +19,7 @@ from data_preprocessing.__main__ import main, make_parser
 from data_preprocessing.common import PROJECT_ROOT, training_paths, write_parquet_atomic
 from feature_selection import train_baseline as baseline
 from feature_selection.select_features import build_feature_sets
+from prediction_api import RawApplication, application_features
 
 
 def save(frame, path):
@@ -139,6 +140,25 @@ def test_complete_pipeline_cli_and_training_compatibility(raw_dir, tmp_path):
     assert inventory.column_name.tolist() == ["case_id", *featured.columns]
     features = baseline.eligible_features(processed / "model_feature_eligibility.csv")
     assert len(features) == 20
+    serving_features = [name for name in features if not name.startswith("deposit_opening_")]
+    histories = ["2019-12-31", "2020-01-05", "2020-01-10", "2020-01-11", None]
+    application = RawApplication.model_validate({
+        "decision_date": "2020-01-10",
+        "annuity_amount": 100,
+        "credit_amount": 500,
+        "employment_industry": "A",
+        "income_type": "salary",
+        "main_occupation_income": 1000,
+        "employment_start_date": "2020-01-01",
+        "debit_card_opening_dates": histories,
+        "prior_application_dates": histories,
+        "bureau_update_dates": histories,
+    })
+    pd.testing.assert_frame_equal(
+        application_features(application)[serving_features],
+        featured.loc[[1], serving_features].reset_index(drop=True),
+        check_dtype=False,
+    )
     config = baseline.load_config(baseline.DEFAULT_CONFIG)
     assert len(build_feature_sets(features, config)) == 8
     config["split"] = {"train_start": 0, "train_end": 1, "validation_end": 2, "test_end": 3}

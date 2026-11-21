@@ -1,13 +1,12 @@
-# Credit risk modelling workflow: data processing, feature selection, and tuning
+# Credit risk modelling workflow
 
-**Checkpoint: 16 November 2026.** Historical study checkpoints retain their dates.
+**Checkpoint: 21 November 2026.** Historical study checkpoints retain their dates.
 
-This document explains how the training data was built, how features were
-selected, how Optuna tunes LightGBM, and how MLflow records the resulting
-experiments and final refit. It includes completed feature-selection results,
-the approved 17-feature decision, and the current tuning checkpoint. It is a
-personal reference for returning to the project; the README contains the
-shorter setup and command guide.
+This document follows the project from raw training data and feature selection
+through Optuna tuning, held-out evaluation, MLflow registration, and local
+predictions through FastAPI and Streamlit. It records the approved 17-feature
+model and how a raw application is scored. The README contains the shorter
+setup and command guide.
 
 The account below was checked against the notebooks, current Parquet files,
 feature inventory, configuration files, Python runners, and local MLflow
@@ -15,8 +14,9 @@ records. Numbers in the experiment tables are recorded results, rounded to six
 decimal places for readability. Writing this document did not rerun training,
 change the datasets, or select a final feature set. The subsequent human decision
 on 15 November 2026 is recorded below and in the Optuna configuration. Section
-14 preserves the early tuning snapshot; section 20 records the later completed
-selection, saved refit, and final test evaluation.
+14 preserves the early tuning snapshot. Section 20 records the completed
+selection, saved refit, and final test evaluation. Section 21 covers the
+registered champion, prediction API, and Streamlit form.
 
 ### Reading guide
 
@@ -39,6 +39,8 @@ part using these links:
   [DVC and pytest](#16-dvc-git-and-pytest-now-support-this-workflow), and
   [practical commands](#17-practical-commands-for-returning-to-the-work).
 - [Final test evaluation](#20-final-test-evaluation-of-the-frozen-selected-model).
+- [Model Registry and FastAPI serving](#21-model-registry-and-fastapi-serving)
+  and the [Streamlit prediction form](#streamlit-prediction-form).
 - [Remaining work](#18-what-remains-to-decide) and
   [the source/run reference](#19-source-map-and-run-identifiers).
 
@@ -72,7 +74,13 @@ uses **422 boosting rounds** and all development weeks 0–77. On 16 November
 2026, that saved model was evaluated on weeks 78–91: test AUC **0.660722** and
 Gini stability **0.145031** across **151,707 cases**. Section 20 records the
 evaluation procedure and results; section 14 preserves the earlier in-progress
-checkpoint. The expanded implementation has **49 passing tests**.
+checkpoint.
+
+The evaluated refit is registered in MLflow as **`credit-risk` version 1** and
+has the **`champion`** alias. `make serve` loads it into FastAPI, and `make ui`
+starts a Streamlit form for entering one application and its history dates. The
+form shows the API's default probability as a percentage. The suite has **83
+passing tests** at this checkpoint.
 
 The strongest consistency observed among the two reduced sets evaluated was
 for removing deposit history alone: its Gini stability improvement was positive
@@ -115,6 +123,12 @@ flowchart TD
     N --> O[Selected parameters and median best iteration]
     O --> P[Final fixed-round refit on weeks 0-77]
     P --> Q[Completed final evaluation on reserved weeks 78-91]
+    Q --> R[Register the evaluated model in MLflow]
+    R --> S[Load the champion version at API startup]
+    S --> U[Build features and score with FastAPI]
+    T[Raw application and history dates] --> W[Streamlit prediction form]
+    W -->|POST /predict| U
+    U --> V[Default probability displayed in Streamlit]
 ```
 
 There are two distinct outputs before training:
@@ -1072,7 +1086,7 @@ The local MLflow server uses:
 | Component | Location |
 | --- | --- |
 | UI and tracking API | `http://127.0.0.1:5000` by default |
-| Run/metric database | `.mlflow/mlflow.db` |
+| Tracking and Model Registry database | `.mlflow/mlflow.db` |
 | Models and other artifacts | `.mlflow/artifacts/` |
 
 Training targets check the server before starting. Start it with `make mlflow`
@@ -1329,6 +1343,12 @@ Then open the `credit-risk` experiment in the local UI and locate the study IDs
 listed in this document. A `make mlflow-status` check in another terminal
 verifies server health and the UI API.
 
+### If serving the registered model
+
+Start MLflow, FastAPI, and Streamlit in that order with `make mlflow`,
+`make serve`, and `make ui` in separate terminals. Section 21 describes
+startup checks and how to switch versions by alias.
+
 ### If rebuilding the preprocessing outputs
 
 The Python pipeline runs joins → cleaning → engineering → model-input validation:
@@ -1479,11 +1499,11 @@ with small AUC decreases in two windows, as documented above.
 
 Tuning, the fixed-round refit, and final test evaluation are now complete for
 this model. Section 14 retains the historical in-progress snapshot; section
-20 records the completed search selection and final evaluation. The current
-task is to assess the measured discrimination and weekly decline, and decide
-whether performance is adequate for the intended use. The test results must
-not be used to select a replacement configuration while still treating these
-same weeks as an untouched final assessment.
+20 records the completed search selection and final evaluation. The registered
+champion is now available for local scoring through FastAPI. The open decision
+is whether the measured discrimination and weekly decline are acceptable for
+the intended use. Keep these test weeks reserved as the final assessment of
+this refit when choosing a replacement configuration.
 
 Before changing the eligible set, the decision record should state the chosen
 features, why the AUC/stability/complexity tradeoff is acceptable, which study
@@ -1499,7 +1519,7 @@ The work completed so far has not established that:
 - the strongest latest-window removal is the most consistent across time;
 - the current model parameters are the best possible settings;
 - an event-date cutoff resolves all information-availability questions;
-- the model is ready for deployment or an operational lending threshold.
+- the model is ready for production lending decisions or an operational threshold.
 
 These are boundaries of the recorded work. They help distinguish a completed
 experiment from a completed modelling project.
@@ -1530,7 +1550,11 @@ preserve the fitted model artifacts.
 | [Tuning configuration](../hyperparameter_tuning/configs/lightgbm.json) | Approved 17-feature decision, search ranges, windows, stopping, and refit rule |
 | [Tuning tests](../tests/test_hyperparameter_tuning.py) | End-to-end model saving, temporal isolation, trial budgets, and recovery |
 | [Test evaluator](../model_evaluation/evaluate_test.py) | Frozen-model inference, reserved test scoring, and MLflow result linkage |
-| [Evaluation tests](../tests/test_test_evaluation.py) | No retraining, test isolation, input compatibility, and result reuse |
+| [Evaluation tests](../tests/test_test_evaluation.py) | Test isolation, input compatibility, result reuse, and registry alias changes |
+| [Prediction API](../prediction_api.py) | Registered version loading, raw feature preparation, and `POST /predict` |
+| [Streamlit form](../streamlit_app.py) | Raw application fields, API submission, and percentage display |
+| [Streamlit tests](../tests/test_streamlit_app.py) | Request payload, date validation, result display, and unavailable API handling |
+| [Preprocessing tests](../tests/test_preprocessing.py) | Feature parity between raw API inputs and the batch training pipeline |
 | [Makefile](../Makefile) | Actual commands behind the project shortcuts |
 | [README](../README.md) | Server setup and everyday operation |
 | [DVC guide](data-versioning.md) | Snapshot, restore, and future storage commands |
@@ -1676,3 +1700,103 @@ tests** before real test access. They verify test-only row filtering, saved
 categorical vocabularies, no retraining or new model artifact, linkage of
 scores to the source model, repeat reuse, plan isolation, and rejection of
 changed inputs or overlapping splits.
+
+## 21. Model Registry and FastAPI serving
+
+### The registered champion
+
+The local Model Registry links the evaluated refit to a version that consumers
+can select by alias. The tuning trials remain available in the `credit-risk`
+experiment for comparison. Register a refit when it is a candidate for
+serving. The experiment and the registered model both use the name `credit-risk`.
+
+| Registry field | Value at the 21 November 2026 checkpoint |
+| --- | --- |
+| Registered model | `credit-risk` |
+| Version | `1` |
+| Version URI | `models:/credit-risk/1` |
+| Champion URI | `models:/credit-risk@champion` |
+| Source logged model | `models:/m-16b70ba4bdde44238c0eb62a30305cc6` |
+| Source refit run | `15b66824a94b48eca0156f0009cbafb0` |
+| Held-out evaluation run | `7ada22644d884fb6bd93640103f240ef` |
+
+For a future candidate, register its final refit as a new version of
+`credit-risk` and assign `challenger` while comparing it with the champion.
+When the candidate meets the promotion criteria, move `champion` to its version
+in MLflow and restart the API. The prior version stays available for rollback
+by moving the alias back. [Local registry](http://127.0.0.1:5000/#/models/credit-risk)
+
+### Starting the local prediction stack
+
+Run these commands from the project root in separate terminals. Reuse any
+services that are already running.
+
+1. Run `make mlflow` to start the tracking server and Model Registry on port
+   `5000`. Use `make mlflow-status` to check it from another terminal.
+2. Run `make serve` to load the registered champion and start FastAPI on port
+   `8000`. Wait for Uvicorn to print `Application startup complete`.
+3. Run `make ui` and open the browser form on port `8501`.
+   [Local Streamlit form](http://127.0.0.1:8501)
+
+FastAPI resolves `credit-risk@champion` once at startup. It loads that numbered
+version and uses its source run's feature order, data types, and categorical
+vocabularies. After checking runtime compatibility, it logs the loaded version
+and keeps the model in memory until restart. `make serve MODEL_ALIAS=challenger`
+selects a candidate once that alias exists. `MODEL_NAME`, `TRACKING_URI`, and
+`API_PORT` configure the registered model name, MLflow server, and local API port.
+[Interactive API docs](http://127.0.0.1:8000/docs)
+
+If `make serve` sits at `Waiting for application startup`, check MLflow first.
+Its client retries failed registry connections with increasing delays. A
+running API can keep scoring with the model it already loaded. A fresh API
+instance needs MLflow to resolve the alias and load the model. Use one API
+instance per port and keep its terminal open while it serves requests.
+
+### Scoring a raw application
+
+`POST /predict` accepts a decision date, loan amounts, primary-applicant
+employment fields, and lists of debit-card opening, prior-application, and
+active bureau update dates. Include each loan and employment field, using
+`null` for missing values. Use the same amount units as the training data.
+History lists can be omitted when no records are available. Dates use
+`YYYY-MM-DD`. For a new application scored today, `decision_date` is today in
+the business timezone. For a historical replay, use the original decision date.
+[Example request](../README.md#prediction-api)
+
+The API maps the raw fields to the training column names and uses the same
+cleaning and feature engineering as the batch pipeline. It computes
+affordability ratios, employment tenure and history summaries. Only history
+events strictly before `decision_date` contribute to the summaries. It aligns
+the resulting row with the saved 17-feature schema and treats unseen categories
+as missing. The API returns the model's estimated probability of default in
+the `default_probability` field.
+
+```json
+{"default_probability": 0.06655709086973012}
+```
+
+The example request returned that value when the API loaded the champion
+alias. Two held-out applications also matched the offline pipeline exactly on
+all 17 inputs and both probabilities. The test suite checks feature parity and
+that moving `champion` leaves an already resolved version usable while the next
+startup picks up the new version.
+
+### Streamlit prediction form
+
+Enter the decision date, loan amounts, and primary applicant's employment
+details. The date defaults to today and can be changed for historical scoring.
+Open **History dates** to enter debit-card openings, prior applications, and
+active bureau updates, one `YYYY-MM-DD` date per line. Leave unavailable loan or
+employment fields and empty histories blank.
+
+Streamlit populates the employment industry and income type dropdowns from
+FastAPI's `GET /predict/options`, using the categories from the model currently
+in memory. **Estimate default probability** submits the raw form values to
+`POST /predict`. FastAPI computes the 17 model inputs and returns
+`default_probability`. The verified example above appears as **6.66%** in the
+form. [Streamlit setup and port options](../README.md#streamlit-prediction-form)
+
+`UI_PORT` changes Streamlit's port. If FastAPI is on a different local port,
+pass the same `API_PORT` to `make serve` and `make ui`, or set
+`PREDICTION_API_URL` to the API's base URL. If the form reports that FastAPI is
+unavailable, check that the API completed startup and reload the page.

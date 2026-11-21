@@ -3,6 +3,9 @@ SHELL := /bin/bash
 
 PYTHON ?= .env/bin/python
 PORT ?= 5000
+API_PORT ?= 8000
+UI_PORT ?= 8501
+PREDICTION_API_URL ?= http://127.0.0.1:$(API_PORT)
 TRACKING_URI ?= $(or $(MLFLOW_TRACKING_URI),http://127.0.0.1:$(PORT))
 EXPERIMENT_NAME ?= $(or $(MLFLOW_EXPERIMENT_NAME),credit-risk)
 THREADS ?= 2
@@ -19,6 +22,8 @@ OPTUNA_DB ?= .optuna/studies.db
 TIMEOUT ?=
 RESUME ?= 0
 MODEL_RUN_ID ?=
+MODEL_NAME ?= credit-risk
+MODEL_ALIAS ?= champion
 
 baseline ablation ablation-plan: CONFIG ?= feature_selection/configs/group_ablation.json
 joint joint-plan confirm confirm-plan: CONFIG ?= feature_selection/configs/joint_confirmation.json
@@ -54,7 +59,7 @@ EVAL_ARGS = --processed-dir $(call shquote,$(PROCESSED_DIR)) --threads $(call sh
 	$(if $(strip $(MODEL_RUN_ID)),--model-run-id $(call shquote,$(MODEL_RUN_ID))) \
 	$(if $(strip $(RUN_NAME)),--run-name $(call shquote,$(RUN_NAME)))
 
-.PHONY: help check-env mlflow mlflow-status baseline ablation-plan ablation joint-plan joint confirm-plan confirm tune-plan tune evaluate-test-plan evaluate-test test dvc-status dvc-snapshot
+.PHONY: help check-env mlflow mlflow-status baseline ablation-plan ablation joint-plan joint confirm-plan confirm tune-plan tune evaluate-test-plan evaluate-test serve ui test dvc-status dvc-snapshot
 .PHONY: preprocess preprocess-join preprocess-clean preprocess-engineer preprocess-validate
 
 help:
@@ -81,6 +86,8 @@ help:
 	  '  make tune           Tune on three temporal windows and save the selected final refit.' \
 	  '  make evaluate-test-plan  Check a frozen MODEL_RUN_ID without reading test rows.' \
 	  '  make evaluate-test  Evaluate that saved model on its reserved test weeks.' \
+	  '  make serve         Start the local prediction API with the MLflow champion.' \
+	  '  make ui            Start the local Streamlit prediction form.' \
 	  '  make test           Run the pytest suite; no running server required.' \
 	  '  make dvc-status     Check whether tracked data matches its DVC snapshot.' \
 	  '  make dvc-snapshot   Cache current raw inputs and final training inputs.' \
@@ -88,6 +95,9 @@ help:
 	  'Options (NAME=value after the command):' \
 	  '  RUN_NAME, THREADS, CONFIG, PROCESSED_DIR, TRACKING_URI, EXPERIMENT_NAME' \
 	  '  PORT                Local server port and default tracking URL (5000).' \
+	  '  API_PORT            Local prediction API port (8000).' \
+	  '  UI_PORT             Local Streamlit port (8501).' \
+	  '  PREDICTION_API_URL  FastAPI base URL used by Streamlit (defaults to API_PORT).' \
 	  '  PYTHON              Alternate Python executable.' \
 	  '  RAW_DIR             Raw preprocessing inputs (dataset/raw).' \
 	  '  SCREENING_STUDY_ID   Group-ablation study to reuse; temporal inherits the joint choice.' \
@@ -103,7 +113,9 @@ help:
 	  '  OPTUNA_DB           Local study database (.optuna/studies.db).' \
 	  '  TIMEOUT             Optimization seconds for this invocation; refit is additional.' \
 	  '  RESUME              Set to 1 to extend a matching existing Optuna study.' \
-	  '  MODEL_RUN_ID        Explicit saved final-refit run ID for test evaluation.' \
+	  '  MODEL_RUN_ID        Saved final-refit run ID for evaluation.' \
+	  '  MODEL_NAME          Registered MLflow model for serving (credit-risk).' \
+	  '  MODEL_ALIAS         MLflow model alias for serving (champion).' \
 	  '' \
 	  'Examples:' \
 	  '  make ablation RUN_NAME=group-ablation-v2' \
@@ -164,6 +176,16 @@ evaluate-test-plan: mlflow-status
 
 evaluate-test: mlflow-status
 	@$(PYTHON_CMD) model_evaluation/evaluate_test.py $(EVAL_ARGS)
+
+serve: check-env
+	@MLFLOW_TRACKING_URI=$(call shquote,$(TRACKING_URI)) \
+	  MODEL_NAME=$(call shquote,$(MODEL_NAME)) MODEL_ALIAS=$(call shquote,$(MODEL_ALIAS)) \
+	  $(PYTHON_CMD) -m uvicorn prediction_api:app --host 127.0.0.1 --port $(call shquote,$(API_PORT))
+
+ui: check-env
+	@PREDICTION_API_URL=$(call shquote,$(PREDICTION_API_URL)) \
+	  $(PYTHON_CMD) -m streamlit run streamlit_app.py --server.headless=true \
+	  --server.address=127.0.0.1 --server.port=$(call shquote,$(UI_PORT))
 
 test: check-env
 	@$(PYTHON_CMD) -m pytest

@@ -23,6 +23,12 @@ dependencies = [
     "lightgbm>=4.7,<5",
     "mlflow>=3.18,<4",
     "optuna>=5,<6",
+    "fastapi>=0.162.5,<1",
+    "pydantic>=2.9,<3",
+    "uvicorn>=0.54,<1",
+    "requests>=2.32,<3",
+    "streamlit>=1.65,<1.66; python_version < '3.11'",
+    "streamlit>=1.67,<2; python_version >= '3.11'",
     # MLflow's UI imports GraphQL 3 APIs; its own bounds also allow GraphQL 2.
     "graphene>=3.4.3,<4",
     "graphql-core>=3.2.14,<3.3",
