@@ -20,9 +20,10 @@ make historical versions unavailable if no other copy exists.
 
 The depth-join and cleaned intermediate Parquet files remain outside DVC.
 MLflow continues to store experiment metrics and models separately in `.mlflow/`.
-The diagram is also outside DVC. No preprocessing or training pipeline stages
+The diagram is also outside DVC. No DVC preprocessing or training stages
 have been defined: taking a snapshot records existing files without running
-notebooks or training. Snapshot the engineered table and eligibility inventory
+preprocessing or training. Use `make preprocess` to rebuild with the Python
+pipeline. Snapshot the engineered table and eligibility inventory
 after both have been generated successfully.
 
 ## Initial setup commands

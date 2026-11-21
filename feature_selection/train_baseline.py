@@ -180,7 +180,7 @@ def load_training_data(processed_dir, config, threads, *, features=None):
     data_path = processed_dir / "train_base_engineered.parquet"
     inventory_path = processed_dir / "model_feature_eligibility.csv"
     if not data_path.is_file() or not inventory_path.is_file():
-        raise FileNotFoundError("Run notebooks 3 and 4 to generate the engineered table and inventory.")
+        raise FileNotFoundError("Run make preprocess to generate the engineered table and inventory.")
 
     eligible = eligible_features(inventory_path)
     if features is None:

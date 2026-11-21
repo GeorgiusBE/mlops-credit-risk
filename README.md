@@ -1,6 +1,6 @@
 # Credit risk experiments
 
-The preprocessing notebooks generate `dataset/processed/train_base_engineered.parquet`
+The preprocessing Python pipeline generates `dataset/processed/train_base_engineered.parquet`
 and `dataset/processed/model_feature_eligibility.csv`. The baseline script trains
 LightGBM with the eligible columns and evaluates on later validation weeks.
 
@@ -14,6 +14,41 @@ DVC using a local cache. Run `make dvc-status` to inspect them and
 to Git to record a version. See [the DVC setup and command guide](docs/data-versioning.md)
 for installation, the tracked paths, restoring versions, and adding storage later.
 
+## Rebuilding preprocessing outputs
+
+Python scripts in `data_preprocessing` are the supported execution path; the four
+notebooks remain unchanged as exploratory references. Run from the repository root:
+
+```bash
+make preprocess
+# Equivalent command with repository-relative defaults:
+.env/bin/python -m data_preprocessing --stage all
+# Run one stage using existing upstream outputs:
+make preprocess-engineer
+# Override directories and execution resources:
+make preprocess RAW_DIR=/path/to/raw PROCESSED_DIR=/path/to/processed THREADS=2
+```
+
+The CLI supports `--stage join|clean|engineer|validate|all`, `--raw-dir`,
+`--processed-dir`, and `--threads` (default: 2). CLI default directories are
+resolved from the repository location; explicit relative paths use the working
+directory. Each individual stage requires its upstream files and does not run
+earlier stages automatically. Python imports do not run preprocessing.
+
+The join stage reads `train/` under the raw directory and writes
+`train_base_depth0.parquet`, `train_base_depth1.parquet`, and
+`train_base_depth2.parquet`. Cleaning writes `train_base_cleaned.parquet`;
+engineering also reads raw histories and writes `train_base_engineered.parquet`;
+validation writes `model_feature_eligibility.csv`. Each output is replaced
+atomically after its checks pass. A later stage failure can leave earlier stages'
+completed outputs in place; the entire pipeline is not one transaction. Use an
+alternate processed directory to rebuild without replacing current data.
+
+The inventory preserves all 20 eligible features used for historical comparisons.
+The later 17-feature tuning choice remains in the tuning configuration.
+Preprocessing does not train models, log MLflow runs, or update DVC snapshots.
+After reviewing rebuilt outputs, use `make dvc-snapshot` to record their version.
+
 ## Project commands with Make
 
 Run `make` or `make help` from the repository root in WSL/Linux to list the
@@ -22,6 +57,11 @@ the project environment has been installed. The default command only prints help
 
 | Command | Action |
 | --- | --- |
+| `make preprocess` | Rebuild joins, cleaning, feature engineering, and eligibility in order. |
+| `make preprocess-join` | Rebuild the three case-level depth tables from raw training inputs. |
+| `make preprocess-clean` | Clean and validate the existing depth-2 table. |
+| `make preprocess-engineer` | Add 15 engineered features to the cleaned table. |
+| `make preprocess-validate` | Report weekly feature coverage and save the eligibility inventory. |
 | `make mlflow` | Start the local server in the foreground; keep this terminal open. |
 | `make mlflow-status` | Check server health, version, and the GraphQL API used by the experiment UI. |
 | `make baseline` | Train the full eligible-feature baseline. |
@@ -87,7 +127,7 @@ models by default; it can optionally reuse a compatible `JOINT_STUDY_ID`.
 `make confirm` requires a completed joint/review study ID and an explicit human
 shortlist. It never starts joint training or chooses candidates automatically.
 
-Other options are `THREADS` (default 2), `CONFIG`, `PROCESSED_DIR`, `TRACKING_URI`,
+Other options are `THREADS` (default 2), `CONFIG`, `RAW_DIR`, `PROCESSED_DIR`, `TRACKING_URI`,
 `EXPERIMENT_NAME`, and `PYTHON`. For example:
 
 ```bash

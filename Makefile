@@ -6,6 +6,7 @@ PORT ?= 5000
 TRACKING_URI ?= $(or $(MLFLOW_TRACKING_URI),http://127.0.0.1:$(PORT))
 EXPERIMENT_NAME ?= $(or $(MLFLOW_EXPERIMENT_NAME),credit-risk)
 THREADS ?= 2
+RAW_DIR ?= dataset/raw
 PROCESSED_DIR ?= dataset/processed
 RUN_NAME ?=
 SCREENING_STUDY_ID ?=
@@ -27,6 +28,8 @@ tune tune-plan: CONFIG ?= hyperparameter_tuning/configs/lightgbm.json
 shquote = '$(subst ','"'"',$(1))'
 PYTHON_CMD = $(call shquote,$(PYTHON))
 DVC_CMD = $(PYTHON_CMD) -m dvc
+PREPROCESS_ARGS = --raw-dir $(call shquote,$(RAW_DIR)) \
+	--processed-dir $(call shquote,$(PROCESSED_DIR)) --threads $(call shquote,$(THREADS))
 DVC_DATA = dataset/raw/train dataset/raw/test \
 	dataset/raw/feature_definitions.csv dataset/raw/feature_definitions_enhanced.csv \
 	dataset/raw/sample_submission.csv \
@@ -52,6 +55,7 @@ EVAL_ARGS = --processed-dir $(call shquote,$(PROCESSED_DIR)) --threads $(call sh
 	$(if $(strip $(RUN_NAME)),--run-name $(call shquote,$(RUN_NAME)))
 
 .PHONY: help check-env mlflow mlflow-status baseline ablation-plan ablation joint-plan joint confirm-plan confirm tune-plan tune evaluate-test-plan evaluate-test test dvc-status dvc-snapshot
+.PHONY: preprocess preprocess-join preprocess-clean preprocess-engineer preprocess-validate
 
 help:
 	@printf '%s\n' \
@@ -59,6 +63,11 @@ help:
 	  '' \
 	  'Commands:' \
 	  '  make help           Show these instructions (also the default for make).' \
+	  '  make preprocess     Rebuild joins, cleaning, features, and eligibility in order.' \
+	  '  make preprocess-join      Rebuild the three case-level depth tables.' \
+	  '  make preprocess-clean     Clean and validate the existing depth-2 table.' \
+	  '  make preprocess-engineer  Add the 15 engineered features to the cleaned table.' \
+	  '  make preprocess-validate  Check weekly coverage and save feature eligibility.' \
 	  '  make mlflow         Start the local MLflow server in the foreground.' \
 	  '  make mlflow-status  Check server health, version, and the experiment UI API.' \
 	  '  make baseline       Train the full eligible-feature baseline.' \
@@ -80,6 +89,7 @@ help:
 	  '  RUN_NAME, THREADS, CONFIG, PROCESSED_DIR, TRACKING_URI, EXPERIMENT_NAME' \
 	  '  PORT                Local server port and default tracking URL (5000).' \
 	  '  PYTHON              Alternate Python executable.' \
+	  '  RAW_DIR             Raw preprocessing inputs (dataset/raw).' \
 	  '  SCREENING_STUDY_ID   Group-ablation study to reuse; temporal inherits the joint choice.' \
 	  '  JOINT_STUDY_ID       Completed joint/review study ID; required for confirm.' \
 	  '  CANDIDATE_GROUPS     Groups YOU choose after group ablation for joint testing.' \
@@ -109,6 +119,12 @@ check-env:
 	    'Install the project environment as described in README.md, or set PYTHON=/path/to/python.' >&2; \
 	  exit 1; \
 	}
+
+preprocess: check-env
+	@$(PYTHON_CMD) -m data_preprocessing $(PREPROCESS_ARGS) --stage all
+
+preprocess-join preprocess-clean preprocess-engineer preprocess-validate: check-env
+	@$(PYTHON_CMD) -m data_preprocessing $(PREPROCESS_ARGS) --stage $(patsubst preprocess-%,%,$@)
 
 mlflow: check-env
 	@$(PYTHON_CMD) scripts/start_mlflow.py --port $(call shquote,$(PORT))

@@ -88,14 +88,21 @@ scope of the holdout.
 
 ## 2. The overall path from raw data to experiments
 
+The supported preprocessing command is now `make preprocess`, implemented by
+the four Python stage modules in `data_preprocessing`. The notebooks referenced
+below remain unchanged as explanatory records of the same transformations.
+Individual stages can be run with `make preprocess-join`, `preprocess-clean`,
+`preprocess-engineer`, and `preprocess-validate`. The latter targets expect the
+upstream files to exist; training targets do not rebuild preprocessing.
+
 ```mermaid
 flowchart TD
-    A[Raw training tables] --> B[Notebook 1: joins and history summaries]
-    B --> C[Notebook 2: cleaning and validation]
-    C --> D[Notebook 3: feature engineering]
+    A[Raw training tables] --> B[Python join stage: joins and history summaries]
+    B --> C[Python clean stage: cleaning and validation]
+    C --> D[Python engineer stage: feature engineering]
     A --> D
     D --> E[Engineered case table]
-    E --> F[Notebook 4: feature eligibility and coverage]
+    E --> F[Python validate stage: feature eligibility and coverage]
     E --> G[Shared training loader]
     F --> G
     G --> H[Full baseline and individual group removals]
@@ -1324,19 +1331,31 @@ verifies server health and the UI API.
 
 ### If rebuilding the preprocessing outputs
 
-The notebook sequence is joins → cleaning → engineering → model-input
-validation. The feature-definition helper can be run first if its enhanced
-lookup CSV needs rebuilding:
+The Python pipeline runs joins → cleaning → engineering → model-input validation:
 
 ```bash
-.env/bin/python EDA/feature_definitions_enchancer.py
+make preprocess
+# Or select one stage, using its existing upstream files:
+.env/bin/python -m data_preprocessing --stage engineer
+# Rebuild into a separate output directory:
+make preprocess PROCESSED_DIR=/tmp/credit-risk-rebuild THREADS=2
 ```
 
-Then use the project environment as the notebook kernel and work through
-notebooks 1–4. Recheck the final table and inventory before taking another DVC
-snapshot. The Make training targets do not execute those notebooks for you.
+`RAW_DIR` defaults to `dataset/raw` and must contain `train/`; `PROCESSED_DIR`
+defaults to `dataset/processed`. The CLI also accepts `--raw-dir`,
+`--processed-dir`, and `--threads`. It preserves output filenames, the 15
+engineered features, and the 20-feature inventory, independently of the later
+17-feature tuning decision. The enhanced feature-definition CSV is an exploratory
+lookup and is not required to execute the Python transformations.
 
-Two notebook details matter for a fresh session:
+Recheck the final table and inventory before taking another DVC snapshot.
+Preprocessing neither trains models nor updates DVC metadata. Outputs are
+replaced atomically per file after validation; a failure in a later stage does
+not roll back earlier completed stages. The depth-2 join retains disk spilling,
+eight case batches, and a 2 GB DuckDB memory limit.
+
+The retained notebooks have two fresh-session caveats that the Python pipeline
+removes:
 
 - Notebook 2 currently uses an absolute path to this checkout's depth-2 file.
   That path needs adjustment if the repository is moved.
@@ -1497,6 +1516,7 @@ preserve the fitted model artifacts.
 | --- | --- |
 | [Feature-definition helper](../EDA/feature_definitions_enchancer.py) | Mapping raw variable definitions to training tables |
 | [Notebook 1](../data_preprocessing/1_table_joins.ipynb) | Case-level joins and parent/detail aggregation rules |
+| [Python preprocessing stages](../data_preprocessing/) | Supported pipeline: `python -m data_preprocessing`; notebooks 1–4 retained as references |
 | [Notebook 2](../data_preprocessing/2_table_cleaning_post_table_joins.ipynb) | Cleaning, null/type inspection, and validation before saving |
 | [Notebook 3](../data_preprocessing/3_feature_engineering.ipynb) | Ratio, tenure, and date-history formulas |
 | [Notebook 4](../data_preprocessing/4_model_input_validation.ipynb) | Eligibility reasons and weekly coverage |
