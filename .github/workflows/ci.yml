@@ -40,3 +40,6 @@ jobs:
         run: |
           docker compose config --quiet
           docker compose build api
+
+      - name: Smoke test the serving stack
+        run: .venv/bin/python -m scripts.smoke_serving
