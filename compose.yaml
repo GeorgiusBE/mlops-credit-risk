@@ -1,0 +1,85 @@
+x-app-image: &app-image
+  image: credit-risk-app:local
+  pull_policy: never
+
+x-runtime-environment: &runtime-environment
+  OPENBLAS_NUM_THREADS: "1"
+  OMP_NUM_THREADS: "1"
+
+services:
+  mlflow:
+    <<: *app-image
+    user: "${MLFLOW_UID:-1000}:${MLFLOW_GID:-1000}"
+    environment:
+      <<: *runtime-environment
+      HOME: /tmp
+    command:
+      - python
+      - -m
+      - mlflow
+      - server
+      - --host
+      - 0.0.0.0
+      - --port
+      - "5000"
+      - --workers
+      - "1"
+      - --backend-store-uri
+      - sqlite:////mlflow/mlflow.db
+      - --serve-artifacts
+      - --artifacts-destination
+      - /mlflow/artifacts
+      - --allowed-hosts
+      - "mlflow:5000,localhost:*,127.0.0.1:*"
+    ports:
+      - "127.0.0.1:${PORT:-5000}:5000"
+    volumes:
+      - type: bind
+        source: "${MLFLOW_DATA_DIR:-./.mlflow}"
+        target: /mlflow
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:5000/health', timeout=3).close()"]
+      interval: 5s
+      timeout: 4s
+      start_period: 90s
+      retries: 6
+
+  api:
+    <<: *app-image
+    build: .
+    environment:
+      <<: *runtime-environment
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      MODEL_NAME: "${MODEL_NAME:-credit-risk}"
+      MODEL_ALIAS: "${MODEL_ALIAS:-champion}"
+    depends_on:
+      mlflow:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/predict/options', timeout=3).close()"]
+      interval: 5s
+      timeout: 4s
+      start_period: 90s
+      retries: 6
+
+  ui:
+    <<: *app-image
+    command: ["python", "-m", "streamlit", "run", "streamlit_app.py", "--server.address=0.0.0.0", "--server.port=8501", "--server.headless=true"]
+    environment:
+      <<: *runtime-environment
+      PREDICTION_API_URL: http://api:8000
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${UI_PORT:-8501}:8501"
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8501/_stcore/health', timeout=3).close()"]
+      interval: 5s
+      timeout: 4s
+      start_period: 15s
+      retries: 6

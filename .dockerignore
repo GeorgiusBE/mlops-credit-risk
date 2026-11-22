@@ -1,0 +1,17 @@
+**
+!pyproject.toml
+!poetry.lock
+!prediction_api.py
+!streamlit_app.py
+!.streamlit/
+.streamlit/**
+!.streamlit/config.toml
+!data_preprocessing/
+data_preprocessing/**
+!data_preprocessing/*.py
+!feature_selection/
+feature_selection/**
+!feature_selection/train_baseline.py
+!model_evaluation/
+model_evaluation/**
+!model_evaluation/*.py

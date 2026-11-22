@@ -77,6 +77,8 @@ the project environment has been installed. The default command only prints help
 | `make evaluate-test MODEL_RUN_ID=...` | Evaluate the frozen model on its recorded test weeks and log results. |
 | `make serve` | Start the prediction API with the registered MLflow champion. |
 | `make ui` | Start the Streamlit form for scoring a credit application. |
+| `make compose-up` | Start the Docker serving stack and wait for health checks. |
+| `make compose-down` | Stop and remove the Docker serving containers. |
 | `make test` | Run the pytest suite without needing a running MLflow server. |
 | `make dvc-status` | Check tracked data against its current DVC snapshot. |
 | `make dvc-snapshot` | Cache raw inputs and final training inputs; update DVC metadata. |
@@ -497,6 +499,45 @@ percentage. The decision date starts at today. The employment and income
 dropdowns use the loaded model's categories, and history dates can be entered
 one per line. Set `UI_PORT` to change the Streamlit port or `PREDICTION_API_URL`
 to point the form at a different FastAPI base URL. [Open the local form](http://127.0.0.1:8501)
+
+## Run the serving stack with Docker Compose
+
+Run from the repository root with Docker and the Compose plugin available. The
+stack starts MLflow, FastAPI, and Streamlit from one image built with the locked
+Python dependencies. MLflow reads the existing `.mlflow/mlflow.db` registry and
+`.mlflow/artifacts/` through a bind mount. For a fresh checkout, restore both
+from a local MLflow backup containing `credit-risk@champion`, or set
+`MLFLOW_DATA_DIR` to that directory. The data stays outside the image.
+
+Stop any host MLflow process using the same directory before starting Compose.
+Stop the host API and Streamlit processes as well if you want to reuse their
+ports, or set `PORT`, `API_PORT`, and `UI_PORT` to available host ports. The
+containers communicate over the Compose network using their service names.
+
+```bash
+make compose-up
+```
+
+Compose builds the image when it is missing and reuses it on later starts. After
+changing packaged code, dependencies, or the Dockerfile, run
+`docker compose build` before `make compose-up`. To reuse the alternate ports,
+run `make compose-up API_PORT=18001 UI_PORT=18502`.
+
+Open the [local prediction form](http://127.0.0.1:8501),
+[prediction API docs](http://127.0.0.1:8000/docs), or
+[MLflow UI](http://127.0.0.1:5000). To verify serving, submit the synthetic
+application from the [Prediction API example](#prediction-api) and check that
+it returns `default_probability` between zero and one. `docker compose logs api`
+shows the resolved model version. Set `MODEL_NAME` or `MODEL_ALIAS` to select
+another registered model or alias. If the MLflow directory belongs to a Linux
+user with a different UID or GID, set `MLFLOW_UID` and `MLFLOW_GID` to match.
+
+```bash
+make compose-down
+```
+
+The image is available for the next start. The SQLite database and artifacts
+persist in the mounted MLflow directory.
 
 ## Local MLflow
 

@@ -1,6 +1,7 @@
 # Credit risk modelling workflow
 
-**Checkpoint: 21 November 2026.** Historical study checkpoints retain their dates.
+**Modelling checkpoint: 21 November 2026.** Historical study checkpoints retain
+their dates. **Containerized serving checkpoint: 22 November 2026.**
 
 This document follows the project from raw training data and feature selection
 through Optuna tuning, held-out evaluation, MLflow registration, and local
@@ -16,7 +17,7 @@ change the datasets, or select a final feature set. The subsequent human decisio
 on 15 November 2026 is recorded below and in the Optuna configuration. Section
 14 preserves the early tuning snapshot. Section 20 records the completed
 selection, saved refit, and final test evaluation. Section 21 covers the
-registered champion, prediction API, and Streamlit form.
+registered champion, prediction API, Streamlit form, and Docker Compose stack.
 
 ### Reading guide
 
@@ -39,8 +40,9 @@ part using these links:
   [DVC and pytest](#16-dvc-git-and-pytest-now-support-this-workflow), and
   [practical commands](#17-practical-commands-for-returning-to-the-work).
 - [Final test evaluation](#20-final-test-evaluation-of-the-frozen-selected-model).
-- [Model Registry and FastAPI serving](#21-model-registry-and-fastapi-serving)
-  and the [Streamlit prediction form](#streamlit-prediction-form).
+- [Model Registry and FastAPI serving](#21-model-registry-and-fastapi-serving),
+  [Docker Compose](#running-the-serving-stack-with-docker-compose), and the
+  [Streamlit prediction form](#streamlit-prediction-form).
 - [Remaining work](#18-what-remains-to-decide) and
   [the source/run reference](#19-source-map-and-run-identifiers).
 
@@ -77,10 +79,10 @@ evaluation procedure and results; section 14 preserves the earlier in-progress
 checkpoint.
 
 The evaluated refit is registered in MLflow as **`credit-risk` version 1** and
-has the **`champion`** alias. `make serve` loads it into FastAPI, and `make ui`
-starts a Streamlit form for entering one application and its history dates. The
-form shows the API's default probability as a percentage. The suite has **83
-passing tests** at this checkpoint.
+has the **`champion`** alias. `make compose-up` starts the local MLflow registry,
+FastAPI, and Streamlit. The form takes one application and its history dates and
+shows the API's estimated probability of default. The suite has **83 passing
+tests** at the containerized serving checkpoint.
 
 The strongest consistency observed among the two reduced sets evaluated was
 for removing deposit history alone: its Gini stability improvement was positive
@@ -1091,7 +1093,9 @@ The local MLflow server uses:
 
 Training targets check the server before starting. Start it with `make mlflow`
 in one terminal and run training commands in another. The experiment name
-defaults to `credit-risk`.
+defaults to `credit-risk`. The [Docker Compose stack](#running-the-serving-stack-with-docker-compose)
+mounts the same `.mlflow/` directory by default. Run one MLflow server per data
+directory.
 
 ### What a baseline or feature-selection fitted child run contains
 
@@ -1345,9 +1349,9 @@ verifies server health and the UI API.
 
 ### If serving the registered model
 
-Start MLflow, FastAPI, and Streamlit in that order with `make mlflow`,
-`make serve`, and `make ui` in separate terminals. Section 21 describes
-startup checks and how to switch versions by alias.
+Run `make compose-up` to start the [Docker Compose stack](#running-the-serving-stack-with-docker-compose)
+and `make compose-down` when you finish. To run the services directly in WSL,
+use `make mlflow`, `make serve`, and `make ui` in separate terminals.
 
 ### If rebuilding the preprocessing outputs
 
@@ -1553,6 +1557,8 @@ preserve the fitted model artifacts.
 | [Evaluation tests](../tests/test_test_evaluation.py) | Test isolation, input compatibility, result reuse, and registry alias changes |
 | [Prediction API](../prediction_api.py) | Registered version loading, raw feature preparation, and `POST /predict` |
 | [Streamlit form](../streamlit_app.py) | Raw application fields, API submission, and percentage display |
+| [Dockerfile](../Dockerfile) and [build context](../.dockerignore) | Shared serving image, locked dependencies, and included runtime files |
+| [Compose configuration](../compose.yaml) | Service startup order, health checks, host ports, and MLflow storage mount |
 | [Streamlit tests](../tests/test_streamlit_app.py) | Request payload, date validation, result display, and unavailable API handling |
 | [Preprocessing tests](../tests/test_preprocessing.py) | Feature parity between raw API inputs and the batch training pipeline |
 | [Makefile](../Makefile) | Actual commands behind the project shortcuts |
@@ -1726,7 +1732,61 @@ When the candidate meets the promotion criteria, move `champion` to its version
 in MLflow and restart the API. The prior version stays available for rollback
 by moving the alias back. [Local registry](http://127.0.0.1:5000/#/models/credit-risk)
 
-### Starting the local prediction stack
+### Running the serving stack with Docker Compose
+
+Compose runs three containers from the same local image, `credit-risk-app:local`.
+The image includes the locked Python dependencies, the API and form, and the
+shared feature-engineering and scoring code. Training datasets and the DVC
+cache stay in the workspace. MLflow mounts the registry database and model
+artifacts separately from the image. [Dockerfile](../Dockerfile) · [Compose configuration](../compose.yaml)
+
+| Compose service | Role | Default host URL |
+| --- | --- | --- |
+| `mlflow` | Serves the registry and artifacts to FastAPI at `http://mlflow:5000`. | [MLflow UI](http://127.0.0.1:5000) |
+| `api` | Loads and warms up the registered model. Streamlit calls `http://api:8000`. | [FastAPI docs](http://127.0.0.1:8000/docs) |
+| `ui` | Displays the Streamlit form and submits applications to FastAPI. | [Streamlit form](http://127.0.0.1:8501) |
+
+With Docker Desktop running, start the stack from the repository root.
+
+```bash
+make compose-up
+```
+
+On a fresh checkout, restore `.mlflow/mlflow.db` and `.mlflow/artifacts/` from
+the same backup containing `credit-risk@champion`, or point `MLFLOW_DATA_DIR`
+at an existing directory with both. Stop any host MLflow server using that
+directory before starting Compose. Published ports bind to loopback. Use
+`PORT`, `API_PORT`, or `UI_PORT` to select available host ports. For example,
+`make compose-up API_PORT=18001 UI_PORT=18502` puts the API on port `18001` and
+the form on port `18502`.
+
+Compose starts MLflow first, waits for it to become healthy, then starts FastAPI.
+The API loads the selected model and completes a warm-up prediction before it
+serves requests. Streamlit starts once the API can return the prediction options.
+Use `docker compose ps` to check service health and `docker compose logs api`
+to confirm the loaded version. `MODEL_ALIAS=challenger` selects that alias on
+startup. After moving the currently configured alias in MLflow, run
+`docker compose restart api` to load its new target.
+
+To verify the stack, submit a synthetic application through Streamlit and check
+the displayed probability against the API response. The fresh-checkout Compose
+check used a copy of the local registry, loaded `models:/credit-risk/1`, and
+returned **8.32%** in the form. The API score matched the same request made
+directly against the WSL server. To reproduce that check, use the
+[example application](../README.md#prediction-api) with `main_occupation_income`
+set to `48000`, `prior_application_dates` set to `["2021-09-21"]`, and
+`bureau_update_dates` set to `["2022-01-03"]`.
+
+```bash
+make compose-down
+```
+
+This removes the serving containers and keeps the local image and mounted
+MLflow data. `make compose-up` builds the image if it is missing and reuses it
+on later starts. Run `docker compose build` before starting again after changes
+to packaged code, the dependency lock, or the Dockerfile.
+
+### Starting the prediction stack directly in WSL
 
 Run these commands from the project root in separate terminals. Reuse any
 services that are already running.
@@ -1796,7 +1856,9 @@ in memory. **Estimate default probability** submits the raw form values to
 `default_probability`. The verified example above appears as **6.66%** in the
 form. [Streamlit setup and port options](../README.md#streamlit-prediction-form)
 
-`UI_PORT` changes Streamlit's port. If FastAPI is on a different local port,
-pass the same `API_PORT` to `make serve` and `make ui`, or set
-`PREDICTION_API_URL` to the API's base URL. If the form reports that FastAPI is
-unavailable, check that the API completed startup and reload the page.
+`UI_PORT` changes the port used to open Streamlit in a browser. In Compose,
+`API_PORT` changes the published API port, and Streamlit connects using the
+internal `api` service name. In WSL, pass the same `API_PORT` to `make serve`
+and `make ui`, or set `PREDICTION_API_URL` to the API's base URL. If the form
+reports that FastAPI is unavailable, check that the API completed startup and
+reload the page.

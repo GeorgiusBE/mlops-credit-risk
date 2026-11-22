@@ -61,6 +61,7 @@ EVAL_ARGS = --processed-dir $(call shquote,$(PROCESSED_DIR)) --threads $(call sh
 
 .PHONY: help check-env mlflow mlflow-status baseline ablation-plan ablation joint-plan joint confirm-plan confirm tune-plan tune evaluate-test-plan evaluate-test serve ui test dvc-status dvc-snapshot
 .PHONY: preprocess preprocess-join preprocess-clean preprocess-engineer preprocess-validate
+.PHONY: compose-up compose-down
 
 help:
 	@printf '%s\n' \
@@ -88,6 +89,8 @@ help:
 	  '  make evaluate-test  Evaluate that saved model on its reserved test weeks.' \
 	  '  make serve         Start the local prediction API with the MLflow champion.' \
 	  '  make ui            Start the local Streamlit prediction form.' \
+	  '  make compose-up    Start the Docker serving stack and wait for health checks.' \
+	  '  make compose-down  Stop and remove the Docker serving containers.' \
 	  '  make test           Run the pytest suite; no running server required.' \
 	  '  make dvc-status     Check whether tracked data matches its DVC snapshot.' \
 	  '  make dvc-snapshot   Cache current raw inputs and final training inputs.' \
@@ -186,6 +189,12 @@ ui: check-env
 	@PREDICTION_API_URL=$(call shquote,$(PREDICTION_API_URL)) \
 	  $(PYTHON_CMD) -m streamlit run streamlit_app.py --server.headless=true \
 	  --server.address=127.0.0.1 --server.port=$(call shquote,$(UI_PORT))
+
+compose-up:
+	@docker compose up --wait
+
+compose-down:
+	@docker compose down
 
 test: check-env
 	@$(PYTHON_CMD) -m pytest
